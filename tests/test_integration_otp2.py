@@ -80,5 +80,4 @@ class TestPointsIO(unittest.TestCase):
             data=[2500, 2500, 10000]
         )
         ref_access.index.name = "from_id"
-        ref_access.name = "dest_wt"
         tm.assert_series_equal(access, ref_access, check_dtype=False)
