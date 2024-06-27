@@ -6,7 +6,7 @@ import unittest
 
 import accessto
 from accessto.otp2_travel_time_computer import OTP2TravelTimeComputer
-from accessto.access_opportunities import calc_access_to_opportunities, closest_opportunity, within_threshold
+from accessto.access_opportunities import calc_spatial_access, closest_opportunity, within_threshold
 from accessto.points import read_points_from_csv
 
 
@@ -74,7 +74,7 @@ class TestPointsIO(unittest.TestCase):
 
         # Calculate closest opportunity dual access measure
         destination_weights = destinations.set_index('id')['dest_wt']
-        access = calc_access_to_opportunities(ttm, within_threshold, threshold=28.5, destination_weights=destination_weights)
+        access = calc_spatial_access(ttm, within_threshold, threshold=28.5, o_j=destination_weights)
         ref_access = pd.Series(
             index=[11, 12, 13],
             data=[2500, 2500, 10000]
