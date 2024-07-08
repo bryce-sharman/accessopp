@@ -2,8 +2,8 @@ import datetime
 from pathlib import Path
 import r5py
 
-from .enumerations import DEFAULT_SPEED_WALKING, DEFAULT_DEPARTURE_WINDOW
-from .utilities import test_od_input
+from ..enumerations import DEFAULT_SPEED_WALKING, DEFAULT_DEPARTURE_WINDOW
+from ..utilities import test_od_input
 
 class R5PYTravelTimeComputer():
         

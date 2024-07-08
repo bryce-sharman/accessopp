@@ -5,7 +5,7 @@ import pandas.testing as tm
 import unittest
 
 import accessto
-from accessto.otp2_travel_time_computer import OTP2TravelTimeComputer
+from accessto.travel_time_computer.otp2 import OTP2TravelTimeComputer
 from accessto.access_opportunities import calc_spatial_access, closest_opportunity, within_threshold
 from accessto.points import read_points_from_csv
 

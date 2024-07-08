@@ -6,7 +6,7 @@ import pandas.testing as tm
 from shapely import Point
 import unittest
 
-from accessto.r5py_travel_time_computer import R5PYTravelTimeComputer  
+from accessto.travel_time_computer.r5py import R5PYTravelTimeComputer  
 
 class TestR5PYTravelTimeComputer(unittest.TestCase):
     """ 

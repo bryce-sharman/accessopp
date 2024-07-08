@@ -10,8 +10,8 @@ from shutil import rmtree, copy2
 from subprocess import Popen, run
 from time import sleep
 
-from .enumerations import DEFAULT_SPEED_WALKING, DEFAULT_DEPARTURE_WINDOW, OTP_DEPARTURE_INCREMENT
-from .utilities import test_od_input
+from ..enumerations import DEFAULT_SPEED_WALKING, DEFAULT_DEPARTURE_WINDOW, OTP_DEPARTURE_INCREMENT
+from ..utilities import test_od_input
 
 
 class OTP2TravelTimeComputer():
