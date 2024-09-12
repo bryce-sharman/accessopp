@@ -1,6 +1,6 @@
 import datetime
 
-# Both r5py and OTP defaults
+# Defaults that are independent of routing package.
 DEFAULT_SPEED_WALKING = 5.0   # km/hr
 DEFAULT_DEPARTURE_WINDOW = datetime.timedelta(minutes=60)
 ID_COLUMN = "id"

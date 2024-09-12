@@ -1,25 +1,26 @@
 import datetime
 import geopandas as gpd
-from glob import glob
 import json
 from multiprocessing import cpu_count
 from os import PathLike
 import pandas as pd
 from pathlib import Path
+import requests
 from shapely import Point
 import shutil
 import subprocess
-from typing import List
+from typing import Dict, List
 import yaml
 import zipfile
 
 from time import sleep
 
 from ..enumerations import DEFAULT_SPEED_WALKING, DEFAULT_DEPARTURE_WINDOW
-from accessto.utilities import test_od_input
+from accessto.utilities import test_od_input, test_file_existence
+from accessto.utilities import test_dir_existence, empty_directory_recursive
 
 
-new_build_msg = """
+NEW_BUILD_MSG = """
 This method will create a Valhalla network in a new
 Docker container. Before creation, the following will be
 removed from the Docker volume mount before being replaced
@@ -30,12 +31,17 @@ with the updated versions:
     - all GTFS data, if available
 Please enter ('Y' or 'y' to continue, or any other key to exit.)
 """
-
+NO_DOCKER_ERR_MSG = "Error running Docker. Docker Desktop must be installed " \
+                    "and the Docker Engine started to run Valhalla routing."
+NO_EXISTING_OSM_TILES_ERR_MSG = \
+    "OSM file not defined, and no existing tiles have been built."
 VALHALLA_DOCKER_COMPOSE_TEMPLATE = {
+    'version': '3.4',
     'services': {
         'valhalla': {
             'image': 'ghcr.io/gis-ops/docker-valhalla/valhalla:latest',
             'container_name': 'valhalla_latest',
+            'ports': ['8002:8002'],
             'volumes': [],
             'environment': []
         }
@@ -86,7 +92,7 @@ class ValhallaTravelTimeComputer():
 
     """
         
-    def __init__(self, custom_files_path: str | Path):       
+    def __init__(self, custom_files_path: str | PathLike):       
         self.custom_files_path = Path(custom_files_path)
         self.custom_files_path.mkdir(exist_ok=True, parents=True)
 
@@ -97,23 +103,26 @@ class ValhallaTravelTimeComputer():
         self.gtfs_dir.mkdir(exist_ok=True)
         self.elev_dir = self.custom_files_path / 'elevation_data'
         
-        # Ensure that Docker is installed
-        test_docker()
+        # Ensure that Docker is installed and can be run
+        self._test_docker()
+        
+        # These default URLs assume that the server is hosted locally. These can be changed by a user if desired
+        self._request_host_url = "http://localhost:8002"
+        self._status_api = self._request_host_url + "/status"
+        self._request_api = self._request_host_url + "/sources_to_targets"
+        self._headers = {
+            'Content-Type': 'application/json'
+        }
 
     def build_network(
             self, 
             osm_paths: PathLike | list[PathLike] | None = None,
             gtfs_paths: PathLike | list[PathLike] | None = None,
             * , 
-            build_elevation: bool=True,
             force_rebuild=False,
             server_threads: int | None = None
         ) -> None: 
         """ Build a transport network from specified network files.
-
-        Starts a Docker container including built network that is ready
-        for subsequent Valhalla routing commands. Container ID is saved in 
-        self.container_id.
 
         Arguments
         ---------
@@ -121,113 +130,83 @@ class ValhallaTravelTimeComputer():
             Absolute path files to OSM networks, stored in binary (.pbf) format.
             Can be a single path or a list of multiple paths.
             If None then will start a container using previously built network.
-            Default is None.
         gtfs_paths: 
             Path to  public transport schedule information in GTFS format.
             Can be a single or list of GTFS files in zipped format. 
             If None then transit network will not be built.
-            Default is None.
-        build_elevation:
-            Flag to include elevation data in the network build
-            If True, then elevation data must be placed in the 'elevation_data'
-            subfolder of the custom_files directory.
-            Default is True.
+            Previously-built transit network will still be used if osm_paths 
+            is also None.
         force_rebuild:
-            If True, then forces a bebuild of routing tiles. Default is False.
+            If True, then forces a bebuild of routing tiles. Defaults is False.
         server_threads: 
             Number of threads to use by Docker.
-            If None, Valhalla uses the threads in the computer.       
-            Default is None.
+            Defaults to number of threads in the computer - 1.       
 
         """
-        response = input(new_build_msg)
-        if response not in ('Y', 'y'):
-            return
+        # Be sure that user knows they will overwrite custom_files
+        # response = input(new_build_msg)
+        # if response not in ('Y', 'y'):
+        #     return
+
+        # Ensure that osm_paths and gtfs_paths are list so we know their type
+        osm_paths = osm_paths if isinstance(
+            osm_paths, list) else [osm_paths]
+        gtfs_paths = gtfs_paths if isinstance(
+            gtfs_paths, list) else [gtfs_paths]
+
+        # Remove OSM files from the custom_folders to avoid confusion
+        print("Removing existing .osm.pbf  and GTFS files from custom files "
+              "directory.")
+        for osm_file in self.custom_files_path.glob("*.osm.pbf"):
+            (self.custom_files_path / osm_file).unlink()
+        empty_directory_recursive(self.gtfs_dir)
 
         # Prepare OSM files
         if osm_paths is None:
-            # Check that valhalla_tiles directory and valhalla_tiles.tar exist
-            test_file_existence(
-                self.custom_files_path / 'valhalla.tar', 
-                'OSM fle not defined, and no existing tiles have been built.')
-            test_dir_existence(
-                self.custom_files_path / 'valhalla_tiles',
-                'OSM fle not defined, and no existing tiles have been built.')
-            # Remove OSM files from the custom_folders to avoid confusion
-            for osm_file in self.custom_files_path.glob("*.osm.pbf"):
-                (self.custom_files_path / osm_file).unlink()
             use_tiles_ignore_pbf = True
+            # Check that valhalla_tiles directory and valhalla_tiles.tar exist
+            test_file_existence(self.custom_files_path / 'valhalla.tar',
+                                NO_EXISTING_OSM_TILES_ERR_MSG)
+            test_dir_existence(self.custom_files_path / 'valhalla_tiles',
+                               NO_EXISTING_OSM_TILES_ERR_MSG)
         else:
-            # Remove OSM files from the custom_folders
-            for osm_file in self.custom_files_path.glob("*.osm.pbf"):
-                (self.custom_files_path / osm_file).unlink()
-            # Copy OSM files over
-            if isinstance(osm_paths, list):
-                for osm_path in osm_paths:
-                    osm_path = Path(osm_path)
-                    print(self.custom_files_path.as_posix())
-                    shutil.copyfile(osm_path, self.custom_files_path)
-            else:
-                osm_path = Path(osm_paths)
+            use_tiles_ignore_pbf = False
+            print("Copying OSM files to custom_files directory.")
+            for osm_path in osm_paths:
+                osm_path = Path(osm_path)
                 shutil.copyfile(
                     osm_path, self.custom_files_path / osm_path.name)
-            use_tiles_ignore_pbf = False
 
         if gtfs_paths is None:
             build_transit = False
-            # remove all subdirectories in GTFS folder to remove confusion
-            empty_directory_recursive(self.gtfs_dir)
         else:
             build_transit=True
-            # remove all subdirectories in GTFS folder to start with clear slate
-            empty_directory_recursive(self.gtfs_dir)
-            # copy unzipped GTFS file to subfolders
-            if isinstance(osm_paths, list):
-                for gtfs_path in gtfs_paths:
-                    gtfs_path = Path(gtfs_path)
-                    with zipfile.ZipFile(gtfs_path, 'r') as zip_ref:
-                        zip_ref.extractall(self.gtfs_dir / gtfs_path.name)    
-            else:
-                gtfs_path = Path(gtfs_paths)
+            print("Extracting GTFS files to custom_files directory.")
+            for gtfs_path in gtfs_paths:
+                gtfs_path = Path(gtfs_path)
                 with zipfile.ZipFile(gtfs_path, 'r') as zip_ref:
-                    zip_ref.extractall(self.gtfs_dir / gtfs_path.stem)     
-
-        if build_elevation:
-            test_dir_existence(
-                self.elev_dir, 
-                "build_elevation requires elevation data to be inplace in "
-                "custom_files/elevation_data directory.")
+                    zip_ref.extractall(self.gtfs_dir / gtfs_path.name)      
 
         self._start_container(
             use_tiles_ignore_pbf=use_tiles_ignore_pbf, 
-            build_elevation=build_elevation, 
             build_transit=build_transit, 
             force_rebuild=force_rebuild, 
             server_threads=server_threads
         )
 
-
     def build_network_from_dir(
             self, 
             path: PathLike,
             * , 
-            build_elevation: bool=True,
             force_rebuild: bool=False,
             server_threads: int | None = None) -> None:
         """ Builds transport network from directory containing OSM and GTFS data.
 
-        Starts a Docker container including built network that is ready
-        for subsequent Valhalla routing commands. Container ID is saved in 
-        self.container_id.
-
         Arguments
         ---------
-        path: Path to directory containing OSM and, optionally, GTFS files
-        build_elevation:
-            Flag to include elevation data in the network build
-            If True, then elevation data must be placed in the 'elevation_data'
-            subfolder of the custom_files directory.
-            Default is True.
+        path: 
+            Absolute path to directory containing OSM and, optionally, 
+            GTFS files
         force_rebuild:
             If True, then forces a bebuild of routing tiles. Default is False.
         server_threads: 
@@ -236,42 +215,55 @@ class ValhallaTravelTimeComputer():
             Default is None.
 
         """
+        # Be sure that user knows they will overwrite custom_files
+        # response = input(new_build_msg)
+        # if response not in ('Y', 'y'):
+        #     return
+
         path = Path(path)
         test_dir_existence(path, f'Directory not found: {path.as_posix()}')
 
-        osm_files = list(path.glob('*.osm.pbf'))
-        gtfs_files = list(path.glob('*gtfs*.zip', case_sensitive=None))
+        # Remove OSM files from the custom_folders to avoid confusion
+        print("Removing existing .osm.pbf  and GTFS files from custom files "
+              "directory.")
+        for osm_file in self.custom_files_path.glob("*.osm.pbf"):
+            (self.custom_files_path / osm_file).unlink()
+        empty_directory_recursive(self.gtfs_dir)
 
-        if len(osm_files) == 0:
-            print("No OSM files exist in specified directory, "
-                  "trying to start with pre-built network.")
-            self.build_network(
-                osm_paths=None,
-                gtfs_paths=None,
-                build_elevation=False,
-                force_rebuild=False
-            )
+        print("Copying OSM files to custom_files directory.")
+        use_tiles_ignore_pbf = False
+        osm_paths = list(path.glob('*.osm.pbf'))
+        for osm_path in osm_paths:
+            osm_path = Path(osm_path)
+            shutil.copyfile(
+                osm_path, self.custom_files_path / osm_path.name)
+
+        gtfs_paths = list(path.glob('*gtfs*.zip'))
+        if gtfs_paths is None:
+            build_transit = False
         else:
-            if len(gtfs_files) == 0:
-                gtfs_files = None
-            self.build_network(
-                osm_paths=osm_files,
-                gtfs_paths=gtfs_files,
-                build_elevation=build_elevation,
-                force_rebuild=force_rebuild,
-                server_threads=server_threads
-            )
-       
+            build_transit=True
+            print("Extracting GTFS files to custom_files directory.")
+            for gtfs_path in gtfs_paths:
+                gtfs_path = Path(gtfs_path)
+                with zipfile.ZipFile(gtfs_path, 'r') as zip_ref:
+                    zip_ref.extractall(self.gtfs_dir / gtfs_path.name)      
+
+        self._start_container(
+            use_tiles_ignore_pbf=use_tiles_ignore_pbf, 
+            build_transit=build_transit, 
+            force_rebuild=force_rebuild, 
+            server_threads=server_threads
+        )
+
     def compute_walk_traveltime_matrix(
-        self, 
-        origins: gpd.GeoDataFrame, 
-        destinations: gpd.GeoDataFrame | None=None, 
-        walking_cost_options=None
-    ):
+            self, 
+            origins: gpd.GeoDataFrame, 
+            destinations: gpd.GeoDataFrame | None, 
+            walking_cost_options: Dict | None
+        ):
         """ Requests walk-only trip travel time matrix from Valhalla.
-    
-    
-        Arguments
+            Arguments
         ---------
         origins: geopandas.GeoDataFrame
             Origin points.  Has to have at least an ``id`` column and a geometry. 
@@ -280,93 +272,228 @@ class ValhallaTravelTimeComputer():
             If not None, has to have at least an ``id`` column and a geometry.
         walking_cost_options:
             Valhalla cost parameters, as defined in 
-            https://valhalla.github.io/valhalla/api/turn-by-turn/api-reference/#costing-options
-            Anticipated parameters expected to be of particular interest include:
-            - walking_speed: float
-              Walking speed in kilometers per hour. Must be between 0.5 and 25.
-            - max_distance: float
-              Sets the maximum total walking distance of a route. 
-            - use_hills: float
-              Range of values from 0 to 1, where 0 attempts to avoid 
-              hills and steep grades even if it means a longer (time and
-              distance) path, while 1 indicates the pedestrian does not fear 
-              hills and steeper grades. Default is 0.5.
-            - use_lit:  float
-              Range of values from 0 to 1, where 0 indicates indifference 
-              towards lit streets, and 1 indicates that unlit streets should be 
-              avoided. The default value is 0.
-              (Testing for shift-work equity analyses)
+            https://valhalla.github.io/valhalla/api/turn-by-turn/api-reference/#pedestrian-costing-options
+            If `walking_speed` option is not defined then it will default
+            to the accessto default, currently 5.0 km/hr.
+            
+        Notes
+        -----
+        Anticipated parameters expected to be of particular interest 
+        for walk-only trips include:
+            - walking_speed: Walking speed in kilometers per hour.
+            - max_distance: Sets the maximum total walking distance of a route. 
+            - use_hills: Range of values from 0 to 1, where 0 attempts to avoid 
+                hills and steep grades even if it means a longer (time and
+                distance) path, while 1 indicates the pedestrian does not fear 
+                hills and steeper grades. Default is 0.5.
 
         """
+        # Test origins and destination points JSON calls
+        sources, targets = self._create_sources_and_targets_json_calls(
+            origins, destinations)
+
+        # set the costing options JSON calls
         if walking_cost_options is None:
             walking_cost_options = {}
-        # Set default walking speed, if required
         if 'walking_speed' not in walking_cost_options:
             walking_cost_options['walking_speed'] = str(DEFAULT_SPEED_WALKING)
-        # Test origins and destination points
-        test_od_input(origins)
-        if destinations is not None:
-           test_od_input(destinations)    
-
-        sources = create_sources_or_targets(origins)
-        targets = create_sources_or_targets(destinations)
         costing_options = {
             'pedestrian': walking_cost_options
         }
 
+        # Note that because it's using a web protocol that I can call the 
+        # sources_to_targets request from the local computer even though it's being
+        # hosted on the Docker container. 
         full_call = {
             'sources': sources,
             'targets': targets,
             'costing': 'pedestrian',
             'costing_options': costing_options
         }
-        # The valhalla reader appears to be sensitive to spacing,
-        # trying to put everything on one line instead of a pretty printing
-        full_call_str = json.dumps(full_call)
-        with open(self.custom_files_path / "run_routing.sh", 'w', 
-                  encoding='utf-8') as f:
-            f.write(full_call_str + '\n')
-        sleep(1)
-        result = subprocess.check_output([
-                'docker', 
-                'exec', 
-                '-t', 
-                self._container_id, 
-                'bash', 
-                '-c', 
-                'valhalla_service',
-                'valhalla.json',
-                'sources_to_targets',
-                 './run_routing.sh'
-            ], shell=True
+        print(full_call)
+        r = requests.get(
+            self._request_api, headers=self._headers, json=full_call)
+        return self._process_valhalla_matrix_result(
+            r.json(), origins, destinations)
+
+
+    def compute_bicycle_traveltime_matrix(
+            self, 
+            origins: gpd.GeoDataFrame, 
+            destinations: gpd.GeoDataFrame | None, 
+            bicycle_cost_options: Dict
+        ):
+        """ Requests bike-only trip travel time matrix from Valhalla.
+            
+        Arguments
+        ---------
+        origins: geopandas.GeoDataFrame
+            Origin points.  Has to have at least an ``id`` column and a geometry. 
+        destinations: geopandas.GeoDataFrame or None, optional
+            Destination points. If None, will use the origin points. Default is None
+            If not None, has to have at least an ``id`` column and a geometry.
+        bicycle_cost_options:
+            Valhalla cost parameters, as defined in 
+            https://valhalla.github.io/valhalla/api/turn-by-turn/api-reference/#bicycle-costing-options
+            If `walking_speed` option is not defined then it will default
+            to the accessto default, currently 5.0 km/hr.
+            
+        Notes
+        -----
+        Anticipated parameters expected to be of particular interest 
+        for bicycle-only trips include:
+            - bicycle_type: one of Road, Hybrid, City, Cross, Mountain
+                sets the default cycling speed
+            - cycling_speed: Cycling speed in kilometers per hour.
+                Will default to that defined by bicycle_type if not provided.
+            - use_roads: A cyclist's propensity to use roads alongside other 
+                vehicles. This is a range of values from 0 to 1, where 0 
+                attempts to avoid roads and stay on cycleways and paths, and 1 
+                indicates the rider is more comfortable riding on roads. 
+                Valhalla default is 0.5, but we will likely want lower values.
+            - use_hills: A cyclist's propensity to tackle hills in their routes. 
+                This is a range of values from 0 to 1, where 0 
+                where 0 attempts to avoid hills and steep grades even if it 
+                means a longer (time and distance) path, while 1 indicates the 
+                rider does not fear hills and steeper grades. 
+                Valhalla default is 0.5, but we will likely want lower values.
+        """
+        # Test origins and destination points JSON calls
+        sources, targets = self._create_sources_and_targets_json_calls(
+            origins, destinations)
+
+        # Note that there is no default cycling speed (yet) in accessto
+        # so must be defined in the call.
+        full_call = {
+            'sources': sources,
+            'targets': targets,
+            'costing': 'bicycle',
+            'costing_options': {
+                'bicycle': bicycle_cost_options
+            }
+        }
+        print(full_call)
+        r = requests.get(
+            self._request_api, headers=self._headers, json=full_call)
+        print(r)
+        return self._process_valhalla_matrix_result(
+            r.json(), origins, destinations)
+
+
+    @staticmethod
+    def _process_valhalla_matrix_result(
+            result: Dict, 
+            origins: gpd.GeoDataFrame, 
+            destinations: gpd.GeoDataFrame
+        ) -> pd.DataFrame:
+        """ Parse the sources-to-target result coming from Valhalla. """ 
+        # we only care about the matrix results portion
+        s2t = result['sources_to_targets']
+
+        # setup a dataframe to hold the results
+        # Valhalla appears to output results by origin, then by destination, 
+        # hence the following index should match its output order.
+        ttm_index = pd.MultiIndex.from_product(
+            [origins['id'], destinations['id']], names=['from_id', 'to_id'])
+        ttm = pd.Series(index=ttm_index, name='travel_time')
+
+        if len(origins) != len(s2t):
+            raise RuntimeError(
+                "Unexpected number of sources_to_targets, look into this.")
+        # copy the data over to the dataframe, one by one
+        # it first loops over the origins
+        i = 0
+        for origin_results in s2t:
+            # then the results loop over the destinations
+            for od_result in origin_results:
+                ttm.iloc[i] = od_result['time'] / 60.0
+                i += 1
+
+        # return this in the r5py form, which we use throughout accessto
+        return ttm.reset_index()
+
+    def test_valhalla_status(self):
+        """ Test that we can access Valhalla service from local computer."""
+        # I sometimes find that this returns an error, but it works when I call
+        # it again. Trying a sleep to give process time to catch up.
+        # sleep(5)
+        try:
+            r = requests.get(
+                self._status_api, headers=self._headers)
+        except Exception as e:
+            print("Could not connect to network. Check in the Docker "
+                  "logs if the build is complete")
+            raise e
+        return_json = r.json()
+        if r.status_code == 400 or 'version' not in return_json:
+            raise RuntimeError(
+                "Connected to Valhalla server but there was "
+                f"another error.\n{return_json}")
+        print("Successfully connected to Valhalla server.")
+
+#region Helper functions
+    def _test_docker(self):
+        """ Raises RuntimeError if Docker cannot be run. """
+        result = subprocess.run("docker", shell=True) 
+        if not isinstance(result, subprocess.CompletedProcess):
+            raise RuntimeError(NO_DOCKER_ERR_MSG)
+
+    def _ensure_custom_files_write_permissions(self):
+        subprocess.run(
+            f'docker exec -t {self.container_id} bash -c '
+            f'sudo chmod -R ugo+w /custom_files', shell=True
         )
-        print(result)
-        return self._process_valhalla_matrix_result(result, origins, destinations)
 
-
-
+    def _retrieve_valhalla_result_json(self, result):
+        result = result.stdout.decode('UTF-8')
+        first_bracket = result.find('{')
+        result = result[first_bracket:]
+        return json.loads(result)
 
     def _start_container(
-            self, 
-            use_tiles_ignore_pbf, 
-            build_elevation, 
-            build_transit, 
-            force_rebuild, 
-            server_threads
-        ) -> None:
-        """ Starts a Docker container including built network.
+            self, use_tiles_ignore_pbf, build_transit, 
+            force_rebuild, server_threads) -> None:
+        """ Starts a Docker container and builds network, if specified.
         
         Network elements such as OSM, GTFS and elevation data must be in place.
         Container ID is saved in self.container_id.       
+
+        The prepared compose file is a simplified version of the 
+        docker-compose.yml template presented in 
+        https://github.com/gis-ops/docker-valhalla repository
         
         """
-        self._create_docker_compose_file(
-            use_tiles_ignore_pbf=use_tiles_ignore_pbf, 
-            build_elevation=build_elevation, 
-            build_transit=build_transit, 
-            force_rebuild=force_rebuild, 
-            server_threads=server_threads
-        )
+        # Build the compose file
+        if not isinstance(server_threads, int):
+            server_threads = max(cpu_count() - 1, 1)
+            print(f'server_threads not defined, setting to {server_threads}')
+
+        ct = VALHALLA_DOCKER_COMPOSE_TEMPLATE.copy()
+        ct['services']['valhalla']['volumes'] = [
+            f'{self.custom_files_path.as_posix()}:/custom_files']
+        if build_transit:
+            ct['services']['valhalla']['volumes'].append(
+                f'{self.gtfs_dir.as_posix()}:/gtfs_feeds')
+        ct['services']['valhalla']['environment'] = [
+            f'use_tiles_ignore_pbf={use_tiles_ignore_pbf}',
+            f'force_rebuild={force_rebuild}',
+            f'build_transit={build_transit}',
+            f'server_threads={server_threads}',
+            # we don't want to download from here due to SSL issues
+            # has to be done beforehand
+            'build_elevation=False',    
+            'serve_tiles=True',
+            'build_tar=True',
+            'traffic_name=traffic.tar',
+            'build_admins=True',
+            # curl failed downloading time zones file (again)
+            'build_time_zones=False',
+            # needs more testing, but maybe a download issue
+            'use_default_speeds_config=False' 
+        ]
+        # save the compose file to the root in the custom_files path
+        with open(self._compose_fp , 'w') as outfile:
+            yaml.dump(ct, outfile, default_flow_style=False)
         
         # Start the docker container, then get the container id
         proc = subprocess.run(
@@ -377,178 +504,33 @@ class ValhallaTravelTimeComputer():
              raise RuntimeError("Error starting docker container")
         self.container_id = subprocess.check_output(
             ["docker", "ps", "-lq"], shell=True).decode('UTF-8').strip()
- 
-        # Set write and read permissions to the custom_files mount 
-        # This is mainly so that I can write the file containing the 
-        # valhalla_service routing call definition scripts. 
-        subprocess.run(f'docker exec -t {self.container_id} bash -c '
-                        '"sudo chmod a+rw /custom_files"', shell=True)
+        self._ensure_custom_files_write_permissions()
+        self.test_valhalla_status()
+        print("Successfully built network.")
 
-
-    def _create_docker_compose_file(
-            self, 
-            use_tiles_ignore_pbf, 
-            build_elevation, 
-            build_transit, 
-            force_rebuild, 
-            server_threads
-        ):
-        """ Creates a Docker compose file to set container running settings.
-        
-        This compose file is a simplified version of the docker-compose.yml 
-        template presented in 
-        # https://github.com/gis-ops/docker-valhalla repository, modified
-        for the expected use case.
-            - always want to build elevation
-            - we have pre-prepared OSM network files and elevation data
-            - will be using the 'one-shot' valhalla_service command to call the
-              calculation for routes, hence we don't need the port as we won't 
-              be making calls through the Restful API.
-            
+    @staticmethod
+    def _create_sources_and_targets_json_calls(origins, destinations):
+        """ 
+        Convert origins/destinations from gpd.GeoDataFrames to pandas
         """
-        ct = VALHALLA_DOCKER_COMPOSE_TEMPLATE.copy()
-        # add the volumes
-        ct['services']['valhalla']['volumes'] = [
-            f'{self.custom_files_path.as_posix()}:/custom_files']
-        if build_transit:
-            ct['services']['valhalla']['volumes'].append(
-                f'{self.gtfs_dir.as_posix()}:/gtfs_feeds')
-        if build_elevation is not None:
-            ct['services']['valhalla']['volumes'].append(
-                f'{self.elev_dir.as_posix()}:/custom_files/elevation_data')
+        def _create_sources_or_targets_json_call(gdf) -> list:
+            """ Create list of locations based on input GeoDataFrame """
+            out = []
+            for _, row in gdf.iterrows():
+                geometry = row['geometry']
+                out.append(
+                    {
+                        'lat': geometry.y,
+                        'lon': geometry.x
+                    }
+                )
+            return out
 
-        # add the environment variables
-        # This set of variables is fixed:
-        # we want to use pre-prepared OSM files
-        ct['services']['valhalla']['environment']= ['tile_urls=False']
-        # always build this ... why not
-        ct['services']['valhalla']['environment'].append('build_tar=True')   
-        # I don't know if we really need this ... start with True
-        ct['services']['valhalla']['environment'].append('build_admins=True')     
-        # we'll need this for turn penalties and transit routing
-        ct['services']['valhalla']['environment'].append('build_time_zones=True') 
-        # keep container open to run following routing commands
-        ct['services']['valhalla']['environment'].append('serve_tiles=True')  
-        # don't build a traffic archive as we're not (yet) using for traffic
-        ct['services']['valhalla']['environment'].append('traffic_name=""')      
-        # I don't know what to set this to, starting with the default, False
-        ct['services']['valhalla']['environment'].append(
-            'update_existing_config=False')   
-        # Likely only need this for traffic routing
-        ct['services']['valhalla']['environment'].append(
-            'use_default_speeds_config=False')  
-        # This set of environment variables is from class instantiation
-        ct['services']['valhalla']['environment'].append(
-            f'use_tiles_ignore_pbf={use_tiles_ignore_pbf}')
-        ct['services']['valhalla']['environment'].append(
-            f'force_rebuild={force_rebuild}')
-        ct['services']['valhalla']['environment'].append(
-            f'build_elevation={build_elevation}')
-        ct['services']['valhalla']['environment'].append(
-            f'build_transit={build_transit}')
-        if isinstance(server_threads, int):
-            ct['services']['valhalla']['environment'].append(
-                f'server_threads={server_threads}')
+        test_od_input(origins)
+        sources = _create_sources_or_targets_json_call(origins)
+        if destinations is not None:
+           test_od_input(destinations)    
+           targets = _create_sources_or_targets_json_call(destinations)
         else:
-            ct['services']['valhalla']['environment'].append(
-                f'server_threads={max(cpu_count() - 1, 1)}')
-
-        # save the compose file to the root in the custom_files path
-        print('docker compose file in dictionary form')
-        print(ct)
-        with open(self._compose_fp , 'w') as outfile:
-            yaml.dump(ct, outfile, default_flow_style=False)
-
-
-#region Helper functions
-# These functions could be static methods, but I'm inluding at the 
-# module level.
-
-
-def process_valhalla_matrix_result(
-    result: bytes, 
-    origins: gpd.GeoDataFrame, 
-    destinations: gpd.GeoDataFrame
-) -> pd.DataFrame:
-    """ Parse the sources-to-target result coming from Valhalla """ 
-
-    # The result string seems to start with information and then turns to a 
-    # dictionary later on. We'll look for the dictionary by finding the 
-    # first instance of '{'
-    result = result.decode('UTF-8')
-    first_bracket = result.find('{')
-    result = result[first_bracket:]
-    # this next line parses out the return dictionary, which is in JSON format
-    result_json = json.loads(result)  
-    print(result_json)
-    # we only care about the matrix results portion
-    sources_to_targets = result_json['sources_to_targets']
-
-    # setup a dataframe to hold the results
-    # Valhalla appears to output results by origin, then by destination, 
-    # hence the following index should match its output order.
-    ttm_index = pd.MultiIndex.from_product(
-        [origins['id'], destinations['id']], names=['from_id', 'to_id'])
-    ttm = pd.Series(index=ttm_index, name='travel_time')
-
-    if len(origins) != len(sources_to_targets):
-        raise RuntimeError(
-            "Unexpected number of sources_to_targets, look into this.")
-    # copy the data over to the dataframe, one by one
-    # it first loops over the origins
-    i = 0
-    for origin_results in sources_to_targets:
-        # then the results loop over the destinations
-        for od_result in origin_results:
-            ttm.iloc[i] = od_result['time'] / 60.0
-            i += 1
-            print(od_result)
-
-    # we only really want the time, so just return this in the r5py form
-    return ttm.reset_index()
-
-
-def test_docker():
-    """ Test that docker can be run. """
-    result = subprocess.run("docker", shell=True) 
-    if not isinstance(result, subprocess.CompletedProcess):
-        raise RuntimeError(
-            "Error running Docker. Docker Desktop must be installed "
-            "and the Docker Engine started to run Valhalla routing.")
-
-
-def create_sources_or_targets(gdf) -> list:
-    """ Create list of locations based on input GeoDataFrame """
-    out = []
-    for _, row in gdf.iterrows():
-        geometry = row['geometry']
-        out.append(
-            {
-                'lat': geometry.y,
-                'lon': geometry.x
-            }
-        )
-    return out
-
-
-def test_file_existence(path, msg_on_fail):
-    """ Test if a file exists. """
-    path = Path(path)
-    if not path.is_file():
-        raise FileNotFoundError(msg_on_fail)
-
-
-def test_dir_existence(path, msg_on_fail):
-    """ Test if a directory exists. """
-    path = Path(path)
-    if not path.is_dir():
-        raise FileNotFoundError(msg_on_fail)
-
-
-def empty_directory_recursive(dir_path):
-    """ Remove all files in a directory, including all subdirectories. """
-    for path in Path(dir_path).glob("**/*"):
-        if path.is_file():
-            path.unlink()
-        elif path.is_dir():
-            shutil.rmtree(path)
+            targets = sources
+        return sources, targets
