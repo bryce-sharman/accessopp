@@ -6,16 +6,16 @@ import pandas.testing as tm
 from pathlib import Path
 import unittest
 
-import accessto
-from accessto.matrix import read_matrix, write_matrix
+import accessocc
+from accessocc.matrix import read_matrix, write_matrix
 
 
 class TestMatrixHelperFunctions(unittest.TestCase):
 
     def setUp(self):
         # Find the path to to the test-directions
-        # The src path is to the src/accessto directory. 
-        src_path = files(accessto)
+        # The src path is to the src/accessopp directory. 
+        src_path = files(accessocc)
         root_path = src_path.parents[1]
         self.testdata_path = root_path / "tests" / "test_data" / "matrix"
 

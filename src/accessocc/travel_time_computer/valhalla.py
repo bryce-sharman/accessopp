@@ -16,8 +16,8 @@ import zipfile
 from time import sleep
 
 from ..enumerations import DEFAULT_SPEED_WALKING, DEFAULT_DEPARTURE_WINDOW
-from accessto.utilities import test_od_input, test_file_existence
-from accessto.utilities import test_dir_existence, empty_directory_recursive
+from accessocc.utilities import test_od_input, test_file_existence
+from accessocc.utilities import test_dir_existence, empty_directory_recursive
 
 
 NEW_BUILD_MSG = """
@@ -274,7 +274,7 @@ class ValhallaTravelTimeComputer():
             Valhalla cost parameters, as defined in 
             https://valhalla.github.io/valhalla/api/turn-by-turn/api-reference/#pedestrian-costing-options
             If `walking_speed` option is not defined then it will default
-            to the accessto default, currently 5.0 km/hr.
+            to the accessopp default, currently 5.0 km/hr.
             
         Notes
         -----
@@ -336,7 +336,7 @@ class ValhallaTravelTimeComputer():
             Valhalla cost parameters, as defined in 
             https://valhalla.github.io/valhalla/api/turn-by-turn/api-reference/#bicycle-costing-options
             If `walking_speed` option is not defined then it will default
-            to the accessto default, currently 5.0 km/hr.
+            to the accessopp default, currently 5.0 km/hr.
             
         Notes
         -----
@@ -362,7 +362,7 @@ class ValhallaTravelTimeComputer():
         sources, targets = self._create_sources_and_targets_json_calls(
             origins, destinations)
 
-        # Note that there is no default cycling speed (yet) in accessto
+        # Note that there is no default cycling speed (yet) in accessopp
         # so must be defined in the call.
         full_call = {
             'sources': sources,
@@ -409,7 +409,7 @@ class ValhallaTravelTimeComputer():
                 ttm.iloc[i] = od_result['time'] / 60.0
                 i += 1
 
-        # return this in the r5py form, which we use throughout accessto
+        # return this in the r5py form, which we use throughout accessopp
         return ttm.reset_index()
 
     def test_valhalla_status(self):

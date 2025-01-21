@@ -1,4 +1,4 @@
-name: accessto
+name: accessopp
 channels:
   - conda-forge
 
@@ -13,4 +13,5 @@ dependencies:
   - r5py=0.1.1
   - jupyterlab
   - yaml
+  - openpyxl
 

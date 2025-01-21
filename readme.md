@@ -1,6 +1,6 @@
-# accessto: Access to opportunities calculator
+# accessopp: Access to opportunities calculator
 
-**accessto** is a library that allows calculation of access to opportunities, a 
+**accessopp** is a library that allows calculation of access to opportunities, a 
 commonly used measure in transportation planning and urban design. This library 
 is designed to support analyses being conducted by City of Toronto staff, 
 although others are welcome to use.
@@ -66,7 +66,7 @@ First go to the folder that you would like to hold this directory.
 If using git, right-click the folder, select 'Git BASH Here'. Run the following
 in Git Bash:
 ```console
-$ git clone https://github.com/bryce-sharman/accessto.git
+$ git clone https://github.com/bryce-sharman/accessopp.git
 ```
 
 If not using git, then you'll need to download and unzip the git file,
@@ -74,20 +74,20 @@ which you can download from this GitHub repository by clicking the green
 `<> Code` button at the top of the root page of this repository on GitHub, 
 and selecting the `Download ZIP` option.
 
-### 3. Install *accessto*
+### 3. Install *accessopp*
 
-Installing the package *accessto* is a two-step process. The first step
+Installing the package *accessopp* is a two-step process. The first step
 is to create a conda environment that contains all dependies, the second
-is to install *accessto* itself.
+is to install *accessopp* itself.
 
 **3.1: Create a conda environment with required dependencies.**
 
 First run miniconda. From the Windows Start Menu, open 
 *Anaconda Prompt (Miniconda3)*. Then change to the root directory of the 
-downloaded *accessto* package.
+downloaded *accessopp* package.
 
-*accessto* contains a conda *environment.yml* file that defines all
-required dependencies. The environment name, *accessto* is defined in the 
+*accessopp* contains a conda *environment.yml* file that defines all
+required dependencies. The environment name, *accessopp* is defined in the 
 environment.yml file. To create a conda environment with the required 
 dependencies, simply run the following command.
 
@@ -95,18 +95,18 @@ dependencies, simply run the following command.
 > conda env create -f environment.yml
 ```
 
-**3.2 Install *accessto*
+**3.2 Install *accessopp*
 First, activate the new conda environment. You will need to do this step
 whenever using the package.
 
 ```console
-(base) conda activate accessto
-(accessto) cd [path to root folder of this library] 
+(base) conda activate accessopp
+(accessopp) cd [path to root folder of this library] 
 ```
 
 Then the following command to install this package.
 ```console
-(accessto) [local directory]> pip install --no-build-isolation --no-deps install -e .
+(accessopp) [local directory]> pip install --no-build-isolation --no-deps install -e .
 ```
 
 > **_NOTE:_** Note that the root folder of the library contains the 
@@ -116,7 +116,7 @@ that the pip install doesn't try to modify the dependencies.
 
 To update this package, replace the previous command with the following:
 ```console
-(accessto) [local directory]> pip install --no-build-isolation --no-deps --upgrade -e .
+(accessopp) [local directory]> pip install --no-build-isolation --no-deps --upgrade -e .
 ```
 
 ### 4. Install Java
@@ -143,7 +143,7 @@ https://github.com/opentripplanner/OpenTripPlanner/releases
 Download the 'shaded jar' file, *e.g.* **otp-2.4.0-shaded.jar**.
 
 **_NOTE:_** OTP v2.5.0 is now available, however this version requires Java 21. 
-Testing for `accessto` has only been completed using OTP v2.4.0. 
+Testing for `accessopp` has only been completed using OTP v2.4.0. 
 
 
 ### 6. Download *r5* JAR file and setup the `r5py`` config file (only if using r5py)
@@ -188,20 +188,20 @@ Complete me!
 Here's the link to a file, but add description
 https://elevation-tiles-prod.s3.us-east-1.amazonaws.com/skadi/N44/N44W078.hgt.gz
 
-## Running *accessto*
+## Running *accessopp*
 
 ### Open in Jupyter Lab
 
 1. From the Windows Start Menu, open *Anaconda Prompt (Miniconda3)
 2. Activate the `r5py` library by typing the following in the Miniconda prompt window
     ```console 
-    (base) [local directory]> conda activate accessto
+    (base) [local directory]> conda activate accessopp
     ```
 3. Open a Jupyter Lab file, then open Jupyter lab
     - first change directory to where your notebooks are stored
         ```console 
-        (accessto) [local directory]> cd [notebook location] 
-        (accessto) [notebook location]> jupyter lab
+        (accessopp) [local directory]> cd [notebook location] 
+        (accessopp) [notebook location]> jupyter lab
         ```
 
 ### Run OpenTripPlanner
@@ -213,7 +213,7 @@ https://elevation-tiles-prod.s3.us-east-1.amazonaws.com/skadi/N44/N44W078.hgt.gz
 **_NOTE:_** It may be necessary to specify the home location of Java. 
 To find this path type `%APPDATA%` in the URL of an explorer window, navigate to 
 `\AppData\Local\miniconda3\envs\r5py\Library\lib\jvm`. Copy this folder path, 
-and add to the following code prior to running `accessto`:
+and add to the following code prior to running `accessopp`:
 
 ```console
 (r5py) [local directory]> import os
@@ -222,7 +222,7 @@ and add to the following code prior to running `accessto`:
 Several example scripts are included in the `example_notebooks` folder of this 
 library package to help you get started.
 
-Please also see the [**wiki**](https://github.com/bryce-sharman/accessto/wiki) 
+Please also see the [**wiki**](https://github.com/bryce-sharman/accessopp/wiki) 
 for this project for more detailed documentation and usage guides.
 
 

@@ -3,9 +3,9 @@ import numpy as np
 import pandas as pd
 from pandas import testing as tm
 
-from accessto.access_opportunities import within_threshold, negative_exp, gaussian
-from accessto.access_opportunities import calc_spatial_access, calc_spatial_availability, calc_spatial_heterogeneous_availability
-from accessto.access_opportunities import has_opportunity, closest_opportunity, nth_closest_opportunity
+from accessocc.access_opportunities import within_threshold, negative_exp, gaussian
+from accessocc.access_opportunities import calc_spatial_access, calc_spatial_availability, calc_spatial_heterogeneous_availability
+from accessocc.access_opportunities import has_opportunity, closest_opportunity, nth_closest_opportunity
 
 class TestAccessOpportunities(unittest.TestCase):
 

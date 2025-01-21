@@ -7,8 +7,8 @@ from shapely import Point
 import unittest
 
 
-# from accessto.matrix import Matrix
-from accessto.travel_time_computer.otp2 import OTP2TravelTimeComputer
+# from accessopp.matrix import Matrix
+from accessocc.travel_time_computer.otp2 import OTP2TravelTimeComputer
 
 class Test_OTP2TravelTimeComputer(unittest.TestCase):
 

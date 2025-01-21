@@ -4,18 +4,18 @@ import pandas as pd
 import pandas.testing as tm
 import unittest
 
-import accessto
-from accessto.travel_time_computer.otp2 import OTP2TravelTimeComputer
-from accessto.access_opportunities import calc_spatial_access, closest_opportunity, within_threshold
-from accessto.points import read_points_from_csv
+import accessocc
+from accessocc.travel_time_computer.otp2 import OTP2TravelTimeComputer
+from accessocc.access_opportunities import calc_spatial_access, closest_opportunity, within_threshold
+from accessocc.points import read_points_from_csv
 
 
 class TestPointsIO(unittest.TestCase):
 
     def setUp(self):
         # Find the path to to the test-directions
-        # The src path is to the src/accessto directory. 
-        src_path = files(accessto)
+        # The src path is to the src/accessopp directory. 
+        src_path = files(accessocc)
         root_path = src_path.parents[1]
         testdata_path = root_path / "tests" / "test_data" 
         self.points_path = testdata_path / "points"
