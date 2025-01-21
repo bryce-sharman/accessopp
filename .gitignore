@@ -8,6 +8,8 @@ src/__pycache__/
 src/accessopp.egg-info
 src/accessopp/__pycache__/
 src/accessopp/travel_costs/__pycache__/
+*.pyc
+*.ipynb_checkpoints
 
 
 # This is an interim file storing snippets for various parts of the documentation. 
