@@ -8,7 +8,7 @@ import unittest
 
 
 # from accessopp.matrix import Matrix
-from accessocc.travel_time_computer.otp2 import OTP2TravelTimeComputer
+from accessopp.travel_time_computer.otp2 import OTP2TravelTimeComputer
 
 class Test_OTP2TravelTimeComputer(unittest.TestCase):
 

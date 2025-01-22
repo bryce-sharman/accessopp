@@ -5,8 +5,8 @@ from shapely.geometry import Point
 import unittest
 
 
-import accessocc
-from accessocc.points import read_points_from_csv
+import accessopp
+from accessopp.points import read_points_from_csv
 
 class TestPointsIO(unittest.TestCase):
 
@@ -14,7 +14,7 @@ class TestPointsIO(unittest.TestCase):
     def setUp(self):
         # Find the path to to the test-directions
         # The src path is to the src/accessopp directory. 
-        src_path = files(accessocc)
+        src_path = files(accessopp)
         root_path = src_path.parents[1]
         self.testdata_path = root_path / "tests" / "test_data" / "points"
 

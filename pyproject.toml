@@ -1,6 +1,7 @@
 [build-system]
-build-backend = "setuptools.build_meta"
 requires = ["setuptools>=61.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
 
 [project]
 name = "accessopp"
@@ -16,8 +17,10 @@ classifiers = [
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
 ]
-dependencies = ["requests", "r5py"]
+dependencies = ["r5py"]
 keywords = ["accessibility", "transport"]
-[project.urls]
-homepage = "https://github.com/bryce-sharman/accessopp"
 
+[project.urls]
+Homepage = "https://github.com/bryce-sharman/accessopp"
+Documentation = "https://github.com/bryce-sharman/accessopp/wiki"
+Issues = "https://github.com/bryce-sharman/accessopp/issues"

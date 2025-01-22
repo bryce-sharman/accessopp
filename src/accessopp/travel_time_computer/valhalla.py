@@ -16,8 +16,8 @@ import zipfile
 from time import sleep
 
 from ..enumerations import DEFAULT_SPEED_WALKING, DEFAULT_DEPARTURE_WINDOW
-from accessocc.utilities import test_od_input, test_file_existence
-from accessocc.utilities import test_dir_existence, empty_directory_recursive
+from accessopp.utilities import test_od_input, test_file_existence
+from accessopp.utilities import test_dir_existence, empty_directory_recursive
 
 
 NEW_BUILD_MSG = """
