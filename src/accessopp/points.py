@@ -1,6 +1,6 @@
 """ Module with functions to help read/write points from file, or create an array of points. """
 import geopandas as gpd
-from math import ceil, pi, cos, sin, sqrt
+from math import pi, cos, sin, sqrt
 import numpy as np 
 import pandas as pd 
 from pathlib import Path
