@@ -8,7 +8,7 @@ N_DECIMALS = 3
 
 # Defaults that are independent of routing package.
 DEFAULT_SPEED_WALKING = 5.0   # km/hr
-DEFAULT_SPEED_BIKING = 18.0   # km/hr
+DEFAULT_SPEED_CYCLING = 18.0   # km/hr
 DEFAULT_DEPARTURE_WINDOW = datetime.timedelta(minutes=60)
 ID_COLUMN = "id"
 

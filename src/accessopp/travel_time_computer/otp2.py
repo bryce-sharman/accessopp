@@ -11,7 +11,7 @@ from subprocess import Popen, run
 from time import sleep
 from typing import List, Optional
 
-from accessopp.enumerations import DEFAULT_SPEED_WALKING, DEFAULT_SPEED_BIKING
+from accessopp.enumerations import DEFAULT_SPEED_WALKING, DEFAULT_SPEED_CYCLING
 from accessopp.enumerations import INDEX_COLUMNS, COST_COLUMN, N_DECIMALS
 
 class OTP2TravelTimeComputer():
@@ -255,7 +255,7 @@ class OTP2TravelTimeComputer():
             origins: GeoSeries, 
             destinations: Optional[GeoSeries], 
             speed_walking: Optional[float]=None
-        ) -> pd.DataFrame:
+        ) -> pd.Series:
         """ 
         Requests walk-only trip matrix from OTP, returing trip duration 
         in seconds.
@@ -279,27 +279,26 @@ class OTP2TravelTimeComputer():
                 df.at[(o_id, d_id), COST_COLUMN] = \
                     self._compute_walk_trip_traveltime(
                         o_pt, d_pt, speed_walking, False)
-        df.name = "walk_traveltime_matrix"
-        return df.round(N_DECIMALS)   
+        return df.round(N_DECIMALS).squeeze()
     
     def compute_bike_traveltime_matrix(
             self, 
             origins: GeoSeries, 
             destinations: Optional[GeoSeries], 
-            speed_biking: float = DEFAULT_SPEED_BIKING, 
+            speed_cycling: float = DEFAULT_SPEED_CYCLING, 
             triangle_time_factor: float = 0.5, 
             triangle_slope_factor: float = 0.5, 
             triangle_safety_factor: float= 0.5,
-        ) -> pd.DataFrame:
+        ) -> pd.Series:
         """ 
-        Requests walk-only trip matrix from OTP, returing trip duration 
+        Requests bike-only trip matrix from OTP, returing trip duration 
         in seconds.
 
         Args:
             origins: Origin points.  Index is the point ids.
             destinations: Destination points. If None, then will use the origin 
                 points. Default is None
-            speed_biking: Cycling speed in kilometres per hour. If None then
+            speed_cycling: Cycling speed in kilometres per hour. If None then
                 this is set to the default cycling speed; currently 18 km/hr.
             triangle_time_factor: Time(speed) optimization parameter
                 for OTP2's 'triangle' optimization. (range 0-1), default is 0.5.
@@ -319,12 +318,11 @@ class OTP2TravelTimeComputer():
             for d_id, d_pt in destinations.items():
                 df.at[(o_id, d_id), COST_COLUMN] = \
                     self._compute_bike_trip_traveltime(
-                        o_pt, d_pt, speed_biking, triangle_time_factor, 
+                        o_pt, d_pt, speed_cycling, triangle_time_factor, 
                         triangle_slope_factor, triangle_safety_factor, 
                         test_mode=False
                     )
-        df.name = "bike_traveltime_matrix"
-        return df.round(N_DECIMALS)   
+        return df.round(N_DECIMALS).squeeze()
 
     def compute_transit_traveltime_matrix(
             self, 
@@ -333,7 +331,8 @@ class OTP2TravelTimeComputer():
             departure: datetime, 
             departure_time_window: timedelta, 
             time_increment: timedelta, 
-            speed_walking: float=DEFAULT_SPEED_WALKING):
+            speed_walking: float=DEFAULT_SPEED_WALKING
+        ) ->pd.Series:
         """ 
         Requests walk/transit trip matrix from OTP, returing either trip duration in minutes.
 
@@ -370,7 +369,7 @@ class OTP2TravelTimeComputer():
                     time_increment, speed_walking, skip_test_trip_date=True)
                 df.at[(o_id, d_id), COST_COLUMN] = tt
         df.name = "transit_traveltime_matrix"
-        return df.round(N_DECIMALS) 
+        return df.round(N_DECIMALS).squeeze()
 #endregion 
 
 

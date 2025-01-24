@@ -55,15 +55,15 @@ class Test_OTP2TravelTimeComputer(unittest.TestCase):
 
 #region Departure time testing
     def test_departure_time_testing_okay(self):
-        self.otpi.test_departure_within_service_time_range(datetime(2024, 1, 15, 9, 0, 0))
+        self.otpi._test_departure_within_service_time_range(datetime(2024, 1, 15, 9, 0, 0))
 
     def test_departure_time_testing_too_early(self):
         with self.assertRaises(ValueError):
-            self.otpi.test_departure_within_service_time_range(datetime(2023, 1, 15, 9, 0, 0))
+            self.otpi._test_departure_within_service_time_range(datetime(2023, 1, 15, 9, 0, 0))
 
     def test_departure_time_testing_too_late(self):
         with self.assertRaises(ValueError):
-            self.otpi.test_departure_within_service_time_range(datetime(2025, 1, 15, 9, 0, 0))
+            self.otpi._test_departure_within_service_time_range(datetime(2025, 1, 15, 9, 0, 0))
 #endregion
 
 #region single trip tests
@@ -71,7 +71,7 @@ class Test_OTP2TravelTimeComputer(unittest.TestCase):
     def test_walk_trip_default_speed_walking(self):
         """ Compare walk trip request using default walk speed of 5 km/hr."""
         # r5py gives a travel time of 37 minutes, make sure we're within same ballpark
-        tt = self.otpi.compute_walk_trip_traveltime(self.origin, self.destination)
+        tt = self.otpi._compute_walk_trip_traveltime(self.origin, self.destination)
         r5py_time = 37
         self._test_single_tt(tt, r5py_time, self.ATOL_COARSE, self.ATOL_COARSE)
 
@@ -79,58 +79,58 @@ class Test_OTP2TravelTimeComputer(unittest.TestCase):
     def test_walk_trip_speed_walking_2_0(self):
         """ Compare walk trip request using walk speed of 2 km/hr."""
         # r5py gives a travel time of 92 minutes, make sure we're within same ballpark
-        tt = self.otpi.compute_walk_trip_traveltime(self.origin, self.destination, speed_walking=2.0)
+        tt = self.otpi._compute_walk_trip_traveltime(self.origin, self.destination, speed_walking=2.0)
         r5py_time = 92
         self._test_single_tt(tt, r5py_time, self.ATOL_COARSE, self.ATOL_COARSE)
 
     def test_walk_trip_same_orig_dest(self):
-        tt = self.otpi.compute_walk_trip_traveltime(self.origin, self.origin)
+        tt = self.otpi._compute_walk_trip_traveltime(self.origin, self.origin)
         self.assertEqual(tt, 0.0)
 
     def test_walk_trip_unconnected(self):
-        tt = self.otpi.compute_walk_trip_traveltime(self.origin, self.unconnected_pt)
+        tt = self.otpi._compute_walk_trip_traveltime(self.origin, self.unconnected_pt)
         self.assertTrue(np.isnan(tt))
 
     # Single transit trips
     def test_single_transit_trip_default_speed_walking(self):
         """ Test transit time for a single trip, which has a long wait for the bus. """
-        tt = self.otpi.compute_transit_traveltime(self.origin, self.destination, self.departure_1trip)
+        tt = self.otpi._compute_transit_trip_traveltime(self.origin, self.destination, self.departure_1trip)
         r5py_time = 15
         self._test_single_tt(tt, r5py_time, self.ATOL_COARSE, self.ATOL_COARSE)
 
     def test_single_transit_trip_speed_walking_2_0(self):
         """ Test transit time for a single trip, which has a long wait for the bus. """
-        tt = self.otpi.compute_transit_traveltime(self.origin, self.destination, self.departure_1trip, speed_walking=2.0)
+        tt = self.otpi._compute_transit_trip_traveltime(self.origin, self.destination, self.departure_1trip, speed_walking=2.0)
         r5py_time = 17
         self._test_single_tt(tt, r5py_time, self.ATOL_COARSE, self.ATOL_COARSE)
 
     def test_single_transit_trip_same_orig_dest(self):
-        tt = self.otpi.compute_transit_traveltime(self.origin, self.origin, self.departure_1trip)
+        tt = self.otpi._compute_transit_trip_traveltime(self.origin, self.origin, self.departure_1trip)
         self.assertEqual(tt, 0.0)
 
     def test_single_transit_trip_unconnected(self):
-        tt = self.otpi.compute_transit_traveltime(self.origin, self.unconnected_pt, self.departure_1trip)
+        tt = self.otpi._compute_transit_trip_traveltime(self.origin, self.unconnected_pt, self.departure_1trip)
         self.assertTrue(np.isnan(tt))
 
     # Transit trips over time interval
     def test_transit_trip_interval_default_speed_walking(self):
         """ Test transit time for a single trip, which has a long wait for the bus. """
-        tt = self.otpi.compute_interval_transit_traveltime(self.origin, self.destination, self.departure_interval)
+        tt = self.otpi._compute_interval_transit_traveltime(self.origin, self.destination, self.departure_interval)
         r5py_time = 23
         self._test_single_tt(tt, r5py_time, self.ATOL_COARSE, self.ATOL_COARSE)
 
     def test_transit_interval_speed_walking_2_0(self):
         """ Test transit time for a single trip, which has a long wait for the bus. """
-        tt = self.otpi.compute_interval_transit_traveltime(self.origin, self.destination, self.departure_interval, speed_walking=2.0)
+        tt = self.otpi._compute_interval_transit_traveltime(self.origin, self.destination, self.departure_interval, speed_walking=2.0)
         r5py_time = 26
         self._test_single_tt(tt, r5py_time, self.ATOL_COARSE, self.ATOL_COARSE)
 
     def test_transit_interval_trip_same_orig_dest(self):
-        tt = self.otpi.compute_transit_traveltime(self.origin, self.origin, self.departure_interval)
+        tt = self.otpi._compute_transit_trip_traveltime(self.origin, self.origin, self.departure_interval)
         self.assertEqual(tt, 0.0)
 
     def test_transit_interval_trip_unconnected(self):
-        tt = self.otpi.compute_transit_traveltime(self.origin, self.unconnected_pt, self.departure_interval)
+        tt = self.otpi._compute_transit_trip_traveltime(self.origin, self.unconnected_pt, self.departure_interval)
         print(tt)
         self.assertTrue(np.isnan(tt))
 
