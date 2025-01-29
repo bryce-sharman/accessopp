@@ -13,6 +13,7 @@ from typing import List, Optional
 
 from accessopp.enumerations import DEFAULT_SPEED_WALKING, DEFAULT_SPEED_CYCLING
 from accessopp.enumerations import INDEX_COLUMNS, COST_COLUMN, N_DECIMALS
+from accessopp.utilities import validate_origins_destinations, create_blank_ttmatrix
 
 class OTP2TravelTimeComputer():
     """ Class to interface with OpenTripPlanner to calculate run times.
@@ -271,15 +272,14 @@ class OTP2TravelTimeComputer():
             Travel times matrix in stacked (tall) format.
 
         """
-        origins, destinations = self._validate_origins_destinations(
+        origins, destinations = validate_origins_destinations(
             origins, destinations)        
-        df = self._create_blank_ttmatrix(origins, destinations)
+        ttm = create_blank_ttmatrix(origins, destinations)
         for o_id, o_pt in origins.items():
             for d_id, d_pt in destinations.items():
-                df.at[(o_id, d_id), COST_COLUMN] = \
-                    self._compute_walk_trip_traveltime(
-                        o_pt, d_pt, speed_walking, False)
-        return df.round(N_DECIMALS).squeeze()
+                ttm.at[(o_id, d_id)] = self._compute_walk_trip_traveltime(
+                    o_pt, d_pt, speed_walking, False)
+        return ttm.round(N_DECIMALS)
     
     def compute_bike_traveltime_matrix(
             self, 
@@ -311,18 +311,17 @@ class OTP2TravelTimeComputer():
             Travel times matrix in stacked (tall) format.
 
         """
-        origins, destinations = self._validate_origins_destinations(
+        origins, destinations = validate_origins_destinations(
             origins, destinations)        
-        df = self._create_blank_ttmatrix(origins, destinations)
+        ttm = create_blank_ttmatrix(origins, destinations)
         for o_id, o_pt in origins.items():
             for d_id, d_pt in destinations.items():
-                df.at[(o_id, d_id), COST_COLUMN] = \
-                    self._compute_bike_trip_traveltime(
-                        o_pt, d_pt, speed_cycling, triangle_time_factor, 
-                        triangle_slope_factor, triangle_safety_factor, 
-                        test_mode=False
-                    )
-        return df.round(N_DECIMALS).squeeze()
+                ttm.at[(o_id, d_id)] = self._compute_bike_trip_traveltime(
+                    o_pt, d_pt, speed_cycling, triangle_time_factor, 
+                    triangle_slope_factor, triangle_safety_factor, 
+                    test_mode=False
+                )
+        return ttm.round(N_DECIMALS)
 
     def compute_transit_traveltime_matrix(
             self, 
@@ -359,17 +358,16 @@ class OTP2TravelTimeComputer():
 
         """
         self._test_departure_within_service_time_range(departure)
-        origins, destinations = self._validate_origins_destinations(
+        origins, destinations = validate_origins_destinations(
             origins, destinations)
-        df = self._create_blank_ttmatrix(origins, destinations)
+        ttm = create_blank_ttmatrix(origins, destinations)
         for o_id, o_pt in origins.items():
             for d_id, d_pt in destinations.items():
                 tt = self._compute_interval_transit_traveltime(
                     o_pt, d_pt, departure, departure_time_window, 
                     time_increment, speed_walking, skip_test_trip_date=True)
-                df.at[(o_id, d_id), COST_COLUMN] = tt
-        df.name = "transit_traveltime_matrix"
-        return df.round(N_DECIMALS).squeeze()
+                ttm.at[(o_id, d_id)] = tt
+        return ttm.round(N_DECIMALS)
 #endregion 
 
 
@@ -525,23 +523,6 @@ class OTP2TravelTimeComputer():
             if elapsed_time >= departure_time_window:  # Exclusive at trip end
                 break
         return np.median(travel_times)
-
-
-
-        
-    def _validate_origins_destinations(self, origins, destinations):
-        if not isinstance(origins, GeoSeries):
-            raise RuntimeError("origins are not a geopandas.GeoSeries")
-        if destinations is None:
-            destinations = origins.copy()
-        elif not isinstance(destinations, GeoSeries):
-                raise RuntimeError("destinations are not a geopandas.GeoSeries")
-        return origins, destinations
-
-    def _create_blank_ttmatrix(self, origins, destinations): 
-        mi = pd.MultiIndex.from_product(
-            [origins.index, destinations.index], names=INDEX_COLUMNS)
-        return pd.DataFrame(index=mi, columns=[COST_COLUMN], data=np.nan)
 
     def _test_departure_within_service_time_range(self, date_time):
         """ Test if provided date is within the graph service time range. """

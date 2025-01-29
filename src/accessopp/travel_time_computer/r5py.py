@@ -8,8 +8,8 @@ from typing import List, Optional
 import r5py
 
 from accessopp.enumerations import DEFAULT_SPEED_WALKING, DEFAULT_SPEED_CYCLING
-from accessopp.enumerations import DEFAULT_DEPARTURE_WINDOW
 from accessopp.enumerations import INDEX_COLUMNS, COST_COLUMN
+from accessopp.utilities import validate_origins_destinations
 
 class R5PYTravelTimeComputer():
         
@@ -74,7 +74,7 @@ class R5PYTravelTimeComputer():
                 connection with the given parameters was found using
                 search parameters.
         """
-        origins, destinations = self._validate_origins_destinations(
+        origins, destinations = validate_origins_destinations(
             origins, destinations)  
         # r5py wants the columns to be in a column called 'id', so make this
         origins.index.name = 'id'
@@ -125,7 +125,7 @@ class R5PYTravelTimeComputer():
                 connection with the given parameters was found using
                 search parameters.
         """
-        origins, destinations = self._validate_origins_destinations(
+        origins, destinations = validate_origins_destinations(
             origins, destinations)  
         # r5py wants the columns to be in a column called 'id', so make this
         origins.index.name = 'id'
@@ -178,7 +178,7 @@ class R5PYTravelTimeComputer():
             Travel times, in seconds, in stacked (tall) format.
 
         """
-        origins, destinations = self._validate_origins_destinations(
+        origins, destinations = validate_origins_destinations(
             origins, destinations)  
 
         origins.index.name = 'id'
@@ -196,15 +196,6 @@ class R5PYTravelTimeComputer():
         df = ttm.compute_travel_times()
         return self._convert_tt_matrix(df)
 
-
-    def _validate_origins_destinations(self, origins, destinations):
-        if not isinstance(origins, GeoSeries):
-            raise RuntimeError("origins are not a geopandas.GeoSeries")
-        if destinations is None:
-            destinations = origins.copy()
-        elif not isinstance(destinations, GeoSeries):
-                raise RuntimeError("destinations are not a geopandas.GeoSeries")
-        return origins, destinations
     
     @staticmethod
     def _convert_tt_matrix(tt):
