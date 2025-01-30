@@ -12,7 +12,8 @@ from time import sleep
 from typing import List, Optional
 
 from accessopp.enumerations import DEFAULT_SPEED_WALKING, DEFAULT_SPEED_CYCLING
-from accessopp.enumerations import INDEX_COLUMNS, COST_COLUMN, N_DECIMALS
+from accessopp.enumerations import DEFAULT_DEPARTURE_WINDOW, DEFAULT_TIME_INCREMENT
+from accessopp.enumerations import N_DECIMALS
 from accessopp.utilities import validate_origins_destinations, create_blank_ttmatrix
 
 class OTP2TravelTimeComputer():
@@ -328,8 +329,8 @@ class OTP2TravelTimeComputer():
             origins: GeoSeries, 
             destinations: Optional[GeoSeries], 
             departure: datetime, 
-            departure_time_window: timedelta, 
-            time_increment: timedelta, 
+            departure_time_window: timedelta = DEFAULT_DEPARTURE_WINDOW, 
+            time_increment: timedelta = DEFAULT_TIME_INCREMENT, 
             speed_walking: float=DEFAULT_SPEED_WALKING
         ) ->pd.Series:
         """ 

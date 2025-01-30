@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta
 from geopandas import GeoSeries
-import json
 from multiprocessing import cpu_count
+import numpy as np
 from os import PathLike
 import pandas as pd
 from pathlib import Path
@@ -9,15 +9,15 @@ import requests
 from shapely import Point
 import shutil
 import subprocess
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 import yaml
 import zipfile
 
 from time import sleep
 
 from accessopp.enumerations import DEFAULT_SPEED_WALKING, DEFAULT_SPEED_CYCLING
-from accessopp.enumerations import INDEX_COLUMNS, COST_COLUMN
-from accessopp.enumerations import DEFAULT_DEPARTURE_WINDOW
+from accessopp.enumerations import DEFAULT_DEPARTURE_WINDOW, DEFAULT_TIME_INCREMENT
+from accessopp.enumerations import N_DECIMALS
 
 from accessopp.utilities import test_file_existence
 from accessopp.utilities import test_dir_existence, empty_directory_recursive
@@ -261,9 +261,9 @@ class ValhallaTravelTimeComputer():
             destinations: Optional[GeoSeries], 
             speed_walking: float = DEFAULT_SPEED_WALKING,
             **kwargs
-        ):
+        ) -> pd.Series:
         """ 
-        Requests walk-only trip matrix from Valhalla, returing trip duration 
+        Requests walk-only trip matrix from Valhalla, returing trip durations 
         in seconds.
 
         Args:
@@ -273,11 +273,11 @@ class ValhallaTravelTimeComputer():
             speed_walking: Walking speed in kilometres per hour. If None then
                 this is set to the default walk speed; currently 5 km/hr.
             **kwargs:
-                Additional Valhalla cost parameters (costing options), as defined in 
+                Additional Valhalla cost parameters (costing options), 
+                as defined in 
                 https://valhalla.github.io/valhalla/api/turn-by-turn/api-reference/#pedestrian-costing-options
                 Anticipated parameters expected to be of particular interest 
                 for walk-only trips include:
-                - walking_speed: Walking speed in kilometers per hour.
                 - max_distance: Maximum total walking distance of a route. 
                 - use_hills: Range of values from 0 to 1, where 0 attempts to  
                     avoid hills and steep grades even if it means a longer (time 
@@ -285,11 +285,7 @@ class ValhallaTravelTimeComputer():
                     not fear hills and steeper grades. Valahlla default is 0.5.
 
         Returns:
-            Travel times matrix in stacked (tall) format. The calculated 
-                travel time is the median calculated travel time between 
-                origin and destinations, if it exists, and numpy.nan if no 
-                connection with the given parameters was found using
-                search parameters.
+            Travel times matrix in stacked (tall) format. 
 
         """
         origins, destinations = validate_origins_destinations(
@@ -308,110 +304,214 @@ class ValhallaTravelTimeComputer():
             'costing_options': costing_options
         }
         r = requests.get(
-            self._request_api, headers=self._headers, json=full_call)
-        return self._process_valhalla_matrix_result(
-            r.json(), origins, destinations)
+            self._s2t_request_api, headers=self._headers, json=full_call)
+        return _process_valhalla_matrix_result(r.json(), origins, destinations)
 
 
-    # def compute_bicycle_traveltime_matrix(
-    #         self, 
-    #         origins: gpd.GeoDataFrame, 
-    #         destinations: gpd.GeoDataFrame | None, 
-    #         bicycle_cost_options: Dict
-    #     ):
-    #     """ Requests bike-only trip travel time matrix from Valhalla.
-            
-    #     Arguments
-    #     ---------
-    #     origins: geopandas.GeoDataFrame
-    #         Origin points.  Has to have at least an ``id`` column and a geometry. 
-    #     destinations: geopandas.GeoDataFrame or None, optional
-    #         Destination points. If None, will use the origin points. Default is None
-    #         If not None, has to have at least an ``id`` column and a geometry.
-    #     bicycle_cost_options:
-    #         Valhalla cost parameters, as defined in 
-    #         https://valhalla.github.io/valhalla/api/turn-by-turn/api-reference/#bicycle-costing-options
-    #         If `walking_speed` option is not defined then it will default
-    #         to the accessopp default, currently 5.0 km/hr.
-            
-    #     Notes
-    #     -----
-    #     Anticipated parameters expected to be of particular interest 
-    #     for bicycle-only trips include:
-    #         - bicycle_type: one of Road, Hybrid, City, Cross, Mountain
-    #             sets the default cycling speed
-    #         - cycling_speed: Cycling speed in kilometers per hour.
-    #             Will default to that defined by bicycle_type if not provided.
-    #         - use_roads: A cyclist's propensity to use roads alongside other 
-    #             vehicles. This is a range of values from 0 to 1, where 0 
-    #             attempts to avoid roads and stay on cycleways and paths, and 1 
-    #             indicates the rider is more comfortable riding on roads. 
-    #             Valhalla default is 0.5, but we will likely want lower values.
-    #         - use_hills: A cyclist's propensity to tackle hills in their routes. 
-    #             This is a range of values from 0 to 1, where 0 
-    #             where 0 attempts to avoid hills and steep grades even if it 
-    #             means a longer (time and distance) path, while 1 indicates the 
-    #             rider does not fear hills and steeper grades. 
-    #             Valhalla default is 0.5, but we will likely want lower values.
-    #     """
-    #     # Test origins and destination points JSON calls
-    #     sources, targets = self._create_sources_and_targets_json_calls(
-    #         origins, destinations)
-
-    #     # Note that there is no default cycling speed (yet) in accessopp
-    #     # so must be defined in the call.
-    #     full_call = {
-    #         'sources': sources,
-    #         'targets': targets,
-    #         'costing': 'bicycle',
-    #         'costing_options': {
-    #             'bicycle': bicycle_cost_options
-    #         }
-    #     }
-    #     print(full_call)
-    #     r = requests.get(
-    #         self._request_api, headers=self._headers, json=full_call)
-    #     print(r)
-    #     return self._process_valhalla_matrix_result(
-    #         r.json(), origins, destinations)
-
-
-
-
-
-    # def compute_transit_traveltime_matrix(
-    #         self, 
-    #         origins: GeoSeries, 
-    #         destinations: Optional[GeoSeries], 
-    #         departure: datetime, 
-    #         departure_time_window: timedelta, 
-    #         speed_walking: float=DEFAULT_SPEED_WALKING,
-    #         **kwargs
-    #     ) ->pd.Series:
-    #     raise NotImplementedError(
-    #         "Transit matrices not yet tested in Valhalla")
-
-    @staticmethod
-    def _process_valhalla_matrix_result(
-            result: Dict, 
+    def compute_bike_traveltime_matrix(
+            self, 
             origins: GeoSeries, 
-            destinations: GeoSeries
+            destinations: Optional[GeoSeries], 
+            speed_cycling: float = DEFAULT_SPEED_CYCLING, 
+            **kwargs
         ) -> pd.Series:
-        """ Parse the sources-to-target result coming from Valhalla. """ 
-        s2t = result['sources_to_targets']
-        ttm = create_blank_ttmatrix(origins, destinations)
-        origin_ids = origins.index
-        destination_ids = destinations.index
-        for i in range(len(origin_ids)):
-            for j in range(len(destination_ids)):
-                s2t_ij = s2t[i][j]
-                ttm.loc[(
-                    origin_ids[s2t_ij['from_index']],
-                    destination_ids[s2t_ij['to_index']]
-                )] = s2t_ij['time']
-        return ttm
+        """ 
+        Requests bike-only trip matrix from OTP, returing trip durations 
+        in seconds.
 
-    def test_valhalla_status(
+        Args:
+            origins: Origin points.  Index is the point ids.
+            destinations: Destination points. If None, then will use the origin 
+                points. Default is None
+            speed_cycling: Cycling speed in kilometres per hour. If None then
+                this is set to the default cycling speed; currently 18 km/hr.
+            kwargs:
+                Additional Valhalla cost parameters (costing options), 
+                as defined in 
+                https://valhalla.github.io/valhalla/api/turn-by-turn/api-reference/#bicycle-costing-options
+                Anticipated parameters expected to be of particular interest 
+                for bike-only trips include:
+                - bicycle_type: one of Road, Hybrid, City, Cross, Mountain
+                    sets the default cycling speed
+                - use_roads: A cyclist's propensity to use roads alongside other 
+                    vehicles. This is a range of values from 0 to 1, where 0 
+                    attempts to avoid roads and stay on cycleways and paths, and 1 
+                    indicates the rider is more comfortable riding on roads. 
+                    Valhalla default is 0.5, but we will likely want lower values.
+                - use_hills: A cyclist's propensity to tackle hills in their routes. 
+                    This is a range of values from 0 to 1, where 0 
+                    where 0 attempts to avoid hills and steep grades even if it 
+                    means a longer (time and distance) path, while 1 indicates the 
+                    rider does not fear hills and steeper grades. 
+                    Valhalla default is 0.5, but we will likely want lower values.
+
+        Returns:
+            Travel times matrix in stacked (tall) format.
+
+        """
+        raise NotImplementedError(
+            "Cannot currently compute bike travel time matrices. "
+            "See Valhalla issue: \n"
+            "https://github.com/valhalla/valhalla/issues/4861"
+        )
+        origins, destinations = validate_origins_destinations(
+            origins, destinations) 
+        sources, targets = self._create_sources_and_targets_json_calls(
+            origins, destinations)
+        # set the costing options JSON calls
+        cycling_cost_options = {'cycling_speed': str(speed_cycling)}
+        for k, v in kwargs.items():
+            cycling_cost_options[k] = v
+        full_call = {
+            'sources': sources,
+            'targets': targets,
+            'costing': 'bicycle',
+            'costing_options': {'bicycle': cycling_cost_options}
+        }
+        r = requests.get(
+            self._s2t_request_api, headers=self._headers, json=full_call)
+        return _process_valhalla_matrix_result(r.json(), origins, destinations)
+    
+
+    def compute_transit_traveltime_matrix(
+            self, 
+            origins: GeoSeries, 
+            destinations: Optional[GeoSeries], 
+            departure: datetime, 
+            departure_time_window: timedelta=DEFAULT_DEPARTURE_WINDOW, 
+            time_increment: timedelta=DEFAULT_TIME_INCREMENT, 
+            speed_walking: float=DEFAULT_SPEED_WALKING,
+            **kwargs
+        ) ->pd.Series:
+        """ 
+        Requests multimodal transit trip matrix from Valhalla, returing 
+        trip durations in seconds.
+
+        Args:
+            origins: Origin points.  Index is the point ids.
+            destinations: Destination points. If None, then will use the origin 
+                points. Default is None
+            departure: Date and time of the start of the departure window
+            departure_time_window: Length of departure time window. All trips
+                are averaged in this window to produce an average transit 
+                travel time.
+            time_increment: Increment between different trip runs in minutes.
+                If None, this is set to the default interval; currently 1 minute.
+            speed_walking: Walking speed in kilometres per hour. If None then
+                this is set to the default walk speed; currently 5 km/hr.
+            **kwargs:
+                Additional Valhalla cost parameters (costing options), 
+                as defined in 
+                https://valhalla.github.io/valhalla/api/turn-by-turn/api-reference/#pedestrian-costing-options
+                and
+                https://valhalla.github.io/valhalla/api/turn-by-turn/api-reference/#transit-costing-options
+                Anticipated parameters expected to be of particular interest 
+                for multi-modal transit trips include:
+                Pedestrian costing options:
+                - max_distance: Maximum total walking distance of a route. 
+                - use_hills: Range of values from 0 to 1, where 0 attempts to  
+                    avoid hills and steep grades even if it means a longer (time 
+                    and distance) path, while 1 indicates the pedestrian does 
+                    not fear hills and steeper grades. Valahlla default is 0.5.
+                Transit costing options
+                - use_bus: User's desire to use buses. Range of values from 0 
+                  (try to avoid buses) to 1 (strong preference for riding buses)
+                - use_rail:	User's desire to use rail/subway/metro. Range of 
+                  values from 0 (try to avoid rail) to 1 (strong preference for 
+                  riding rail).
+                - use_transfers: User's desire to favor transfers. Range of 
+                  values from 0 (try to avoid transfers) to 1 (totally 
+                  comfortable with transfers).
+
+        Returns:
+            Travel times matrix in stacked (tall) format. 
+
+        """
+        origins, destinations = validate_origins_destinations(
+            origins, destinations)
+        ttm = create_blank_ttmatrix(origins, destinations)
+        for o_id, o_pt in origins.items():
+            for d_id, d_pt in destinations.items():
+                tt = self._compute_interval_transit_traveltime(
+                    o_pt, d_pt, departure, departure_time_window, 
+                    time_increment, speed_walking, **kwargs)
+                ttm.at[(o_id, d_id)] = tt
+        return ttm.round(N_DECIMALS)
+
+
+    def _compute_transit_trip_traveltime(
+            self,
+            origin: Point, 
+            destination: Point, 
+            triptime: datetime,
+            speed_walking: Optional[float] = None, # keeping generic at this level
+            **kwargs
+        ) -> float:
+        """ 
+        Requests a transit/walk trip from OTP, returing trip time in seconds.
+
+        Notes:
+            Valhalla does not appear to test if the start date is within 
+            GTFS intervals. Keeping this behaviour, at least for now.
+        """
+        if origin == destination:
+            return 0.0
+        costing_options = _create_transit_costing_options_call(
+            speed_walking, **kwargs)
+        full_call = {
+            'locations': [
+                {'lat': origin.y, 'lon': origin.x}, 
+                {'lat': destination.y, 'lon': destination.x}
+            ],
+            'date_time': {
+                'type': 1, # 1 means: specified departure time
+                'value': triptime.isoformat(sep='T', timespec='minutes')
+            },
+            'costing': 'multimodal',
+            'directions_type': 'none',
+        }
+        if costing_options:
+            full_call['costing_options'] = costing_options
+        r = requests.get(
+            self._route_request_api, headers=self._headers, json=full_call)
+        r_json = r.json()
+        trip_response = r_json['trip']
+        if trip_response['status_message'] != 'Found route between points':
+            raise RuntimeError(
+                f"Error computing trip, here's the entire response: \n{r_json()}")
+        return trip_response['summary']['time']
+
+
+    def _compute_interval_transit_traveltime(
+            self, 
+            origin: Point, 
+            destination: Point, 
+            time_window_start: datetime, 
+            time_window_duration: timedelta, 
+            time_increment: timedelta, 
+            speed_walking: Optional[float] = None,  # keeping generic at this level
+            **kwargs
+        ) -> float:
+        """ 
+        Calculates median transit travel time over interval, inclusive at 
+        interval start, exclusive at interval end. 
+        """
+        elapsed_time = timedelta(0)
+        travel_times = []
+        trip_time = time_window_start
+        while True:
+            travel_time = self._compute_transit_trip_traveltime(
+                origin, destination, trip_time, speed_walking=speed_walking, 
+                **kwargs)
+            travel_times.append(travel_time)
+            trip_time += time_increment
+            elapsed_time += time_increment
+
+            if elapsed_time >= time_window_duration:  # Exclusive at trip end
+                break
+        return np.median(travel_times)
+
+    def _test_valhalla_status(
             self, 
             max_wait: timedelta=timedelta(seconds=120)
         ) -> None:
@@ -447,6 +547,12 @@ class ValhallaTravelTimeComputer():
         print("Successfully connected to Valhalla server.")
 
 #region Helper functions
+    def _ensure_custom_files_write_permissions(self):
+        subprocess.run(
+            f'docker exec -t {self.container_id} bash -c '
+            f'sudo chmod -R ugo+w /custom_files', shell=True
+        )
+
     def _test_docker(self):
         """ Raises RuntimeError if Docker cannot be run. """
         result = subprocess.run("docker", shell=True) 
@@ -508,7 +614,7 @@ class ValhallaTravelTimeComputer():
         self.container_id = subprocess.check_output(
             ["docker", "ps", "-lq"], shell=True).decode('UTF-8').strip()
         self._ensure_custom_files_write_permissions()
-        self.test_valhalla_status(max_wait=timedelta(seconds=120))
+        self._test_valhalla_status(max_wait=timedelta(seconds=120))
         print("Successfully built network.")
 
     @staticmethod
@@ -551,4 +657,64 @@ class ValhallaTravelTimeComputer():
     def request_host_url(self, new_request_host_url):
         self._request_host_url = new_request_host_url
         self._status_api = self._request_host_url + "/status"
-        self._request_api = self._request_host_url + "/sources_to_targets"
+        self._s2t_request_api = self._request_host_url + "/sources_to_targets"
+        self._route_request_api = self._request_host_url + "/route"
+
+
+def _create_transit_costing_options_call(
+        speed_walking: Optional[float]=None, **kwargs) -> Dict | None:
+    """ 
+    Separate out the walking and transit cost options. I don't know
+    yet how Valhalla handles empty dictionaries, so making sure
+    to not create any tags if they are not needed.
+
+    See docstring for compute_transit_traveltime_matrix for a desciption
+    of the arguments.
+    
+    """
+    transit_cost_options = {}
+    walking_cost_options = {}
+    if speed_walking:
+        walking_cost_options['walking_speed'] = str(speed_walking)
+    if kwargs:
+        for k, v in kwargs.items():
+            if k in ['use_bus', 'use_rail', 'use_transfers', 'filters']:
+                transit_cost_options[k] = str(v)
+            else:
+                walking_cost_options[k] = str[v]
+    if not walking_cost_options and not transit_cost_options:
+        return None
+    elif walking_cost_options and not transit_cost_options:
+        return {'pedestrian': walking_cost_options}
+    elif not walking_cost_options and transit_cost_options:
+        return {'transit': transit_cost_options}
+    else:
+        return {
+            'pedestrian': walking_cost_options,
+            'transit': transit_cost_options
+        }
+
+def _process_valhalla_matrix_result(
+        result: Dict, 
+        origins: GeoSeries, 
+        destinations: GeoSeries
+    ) -> pd.Series:
+    """ Parse the sources-to-target result coming from Valhalla. """ 
+    try:
+        s2t = result['sources_to_targets']
+    except KeyError:
+        raise RuntimeError(
+            "Incorrect format from Valhalla's matrix request. "
+            f"The Full return JSON is: \n{result}"
+        )
+    ttm = create_blank_ttmatrix(origins, destinations)
+    origin_ids = origins.index
+    destination_ids = destinations.index
+    for i in range(len(origin_ids)):
+        for j in range(len(destination_ids)):
+            s2t_ij = s2t[i][j]
+            ttm.loc[(
+                origin_ids[s2t_ij['from_index']],
+                destination_ids[s2t_ij['to_index']]
+            )] = s2t_ij['time']
+    return ttm.round(N_DECIMALS)
