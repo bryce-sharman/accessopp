@@ -451,6 +451,10 @@ class ValhallaTravelTimeComputer():
         Requests a transit/walk trip from OTP, returing trip time in seconds.
 
         Notes:
+            It appears that Valhalla's 'multi-modal' option is a 'must-use 
+            mode'. Hence also compute the walk travel time and return
+            whichever is less.
+
             Valhalla does not appear to test if the start date is within 
             GTFS intervals. Keeping this behaviour, at least for now.
         """
@@ -479,8 +483,14 @@ class ValhallaTravelTimeComputer():
         if trip_response['status_message'] != 'Found route between points':
             raise RuntimeError(
                 f"Error computing trip, here's the entire response: \n{r_json()}")
-        return trip_response['summary']['time']
-
+        
+        transit_time = trip_response['summary']['time']
+        walk_time = self._compute_walk_traveltime(
+            origin, destination, triptime, speed_walking, **kwargs)
+        if transit_time < walk_time:
+            return transit_time
+        else:
+            return walk_time
 
     def _compute_interval_transit_traveltime(
             self, 
@@ -510,6 +520,53 @@ class ValhallaTravelTimeComputer():
             if elapsed_time >= time_window_duration:  # Exclusive at trip end
                 break
         return np.median(travel_times)
+
+
+    def _compute_walk_traveltime(
+            self,
+            origin: Point,
+            destination: Point,
+            triptime: Optional[datetime] = None,
+            speed_walking: Optional[float] = None,
+            **kwargs
+    ) -> float:
+        
+        if origin == destination:
+            return 0.0
+        walking_cost_options = {}
+        if speed_walking:
+            walking_cost_options['walking_speed'] = str(speed_walking)
+        for k, v in kwargs.items():
+            walking_cost_options[k] = v
+
+        full_call = {
+            'locations': [
+                {'lat': origin.y, 'lon': origin.x}, 
+                {'lat': destination.y, 'lon': destination.x}
+            ],
+            'costing': 'pedestrian',
+            'directions_type': 'none',
+        }
+        if triptime:
+            full_call['date_time'] = {
+                'type': 1, # 1 means: specified departure time
+                'value': triptime.isoformat(sep='T', timespec='minutes')
+            }
+        else:
+            full_call['date_time'] = {'type': 0}  # 0 means: leave now
+        if walking_cost_options:
+                full_call['costing_options'] = {
+                    'pedestrian': walking_cost_options
+                }
+        r = requests.get(
+            self._route_request_api, headers=self._headers, json=full_call)
+        r_json = r.json()
+        trip_response = r_json['trip']
+        if trip_response['status_message'] != 'Found route between points':
+            raise RuntimeError(
+                f"Error computing trip, here's the entire response: \n{r_json()}")
+        return trip_response['summary']['time']
+
 
     def _test_valhalla_status(
             self, 
