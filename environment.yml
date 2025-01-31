@@ -18,3 +18,4 @@ dependencies:
   - yaml
   - openpyxl
   - install-jdk=17
+  - pytest
