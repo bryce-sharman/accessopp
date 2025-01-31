@@ -118,7 +118,8 @@ class ValhallaTravelTimeComputer():
             gtfs_paths: PathLike | list[PathLike] | None = None,
             * , 
             force_rebuild=False,
-            server_threads: int | None = None
+            server_threads: int | None = None,
+            test_mode=False
         ) -> None: 
         """ Build a transport network from specified network files.
 
@@ -142,9 +143,10 @@ class ValhallaTravelTimeComputer():
 
         """
         # Be sure that user knows they will overwrite custom_files
-        response = input(NEW_BUILD_MSG)
-        if response not in ('Y', 'y'):
-            return
+        if not test_mode:
+            response = input(NEW_BUILD_MSG)
+            if response not in ('Y', 'y'):
+                return
 
         # Vahalla can accept multiple OSM and GTFS files
         # Ensure that osm_paths and gtfs_paths are list so we know their type
@@ -258,7 +260,7 @@ class ValhallaTravelTimeComputer():
     def compute_walk_traveltime_matrix(
             self,
             origins: GeoSeries, 
-            destinations: Optional[GeoSeries], 
+            destinations: Optional[GeoSeries] = None, 
             speed_walking: float = DEFAULT_SPEED_WALKING,
             **kwargs
         ) -> pd.Series:
@@ -311,7 +313,7 @@ class ValhallaTravelTimeComputer():
     def compute_bike_traveltime_matrix(
             self, 
             origins: GeoSeries, 
-            destinations: Optional[GeoSeries], 
+            destinations: Optional[GeoSeries] = None, 
             speed_cycling: float = DEFAULT_SPEED_CYCLING, 
             **kwargs
         ) -> pd.Series:
@@ -376,8 +378,8 @@ class ValhallaTravelTimeComputer():
     def compute_transit_traveltime_matrix(
             self, 
             origins: GeoSeries, 
-            destinations: Optional[GeoSeries], 
-            departure: datetime, 
+            destinations: Optional[GeoSeries] = None, 
+            departure: datetime = datetime.now(), 
             departure_time_window: timedelta=DEFAULT_DEPARTURE_WINDOW, 
             time_increment: timedelta=DEFAULT_TIME_INCREMENT, 
             speed_walking: float=DEFAULT_SPEED_WALKING,
@@ -484,13 +486,7 @@ class ValhallaTravelTimeComputer():
             raise RuntimeError(
                 f"Error computing trip, here's the entire response: \n{r_json()}")
         
-        transit_time = trip_response['summary']['time']
-        walk_time = self._compute_walk_traveltime(
-            origin, destination, triptime, speed_walking, **kwargs)
-        if transit_time < walk_time:
-            return transit_time
-        else:
-            return walk_time
+        return trip_response['summary']['time']
 
     def _compute_interval_transit_traveltime(
             self, 
@@ -719,7 +715,9 @@ class ValhallaTravelTimeComputer():
 
 
 def _create_transit_costing_options_call(
-        speed_walking: Optional[float]=None, **kwargs) -> Dict | None:
+        speed_walking: Optional[float] = None,
+        **kwargs
+    ) -> Dict | None:
     """ 
     Separate out the walking and transit cost options. I don't know
     yet how Valhalla handles empty dictionaries, so making sure
@@ -727,29 +725,40 @@ def _create_transit_costing_options_call(
 
     See docstring for compute_transit_traveltime_matrix for a desciption
     of the arguments.
+
+    From testing, it appears that the transit costing options must be defined
+    or else Valhalla returns very wierd results. Hence setting defaults
+    of 0.5 for all transit options.
     
     """
-    transit_cost_options = {}
-    walking_cost_options = {}
+    # Set transit and walking costing options to defaults
+    transit_cost_options = {
+        'use_bus': 0.5,
+        'use_rail': 0.5,
+        'use_transfers': 0.5
+    }
     if speed_walking:
-        walking_cost_options['walking_speed'] = str(speed_walking)
+        walking_cost_options = {
+            'walking_speed': speed_walking
+        }
+    else:
+        walking_cost_options = {
+        'walking_speed': DEFAULT_SPEED_WALKING
+    } 
+    # Overwrite/add costing options, as defined in kwargs
     if kwargs:
         for k, v in kwargs.items():
-            if k in ['use_bus', 'use_rail', 'use_transfers', 'filters']:
+            if k == 'walking_speed':
+                print('Ignoring walking_speed costing option, use '
+                      'speed_walking argument instead')
+            elif k in ['use_bus', 'use_rail', 'use_transfers', 'filters']:
                 transit_cost_options[k] = str(v)
             else:
                 walking_cost_options[k] = str[v]
-    if not walking_cost_options and not transit_cost_options:
-        return None
-    elif walking_cost_options and not transit_cost_options:
-        return {'pedestrian': walking_cost_options}
-    elif not walking_cost_options and transit_cost_options:
-        return {'transit': transit_cost_options}
-    else:
-        return {
-            'pedestrian': walking_cost_options,
-            'transit': transit_cost_options
-        }
+    return {
+        'pedestrian': walking_cost_options,
+        'transit': transit_cost_options
+    }
 
 def _process_valhalla_matrix_result(
         result: Dict, 
