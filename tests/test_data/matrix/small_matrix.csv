@@ -1,4 +1,4 @@
-from_id,to_id,travel_time
+origin_id,destination_id,cost
 1,100,1000.1
 1,101,1001.1
 1,102,1002.1
