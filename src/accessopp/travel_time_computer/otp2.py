@@ -81,7 +81,6 @@ class OTP2TravelTimeComputer():
     }
 
     def __init__(self):
-        
         # These attributes will need to be defined before starting OTP instance
         self._java_path = None
         self._otp_jar_path = None
@@ -255,8 +254,8 @@ class OTP2TravelTimeComputer():
     def compute_walk_traveltime_matrix(
             self, 
             origins: GeoSeries, 
-            destinations: Optional[GeoSeries], 
-            speed_walking: Optional[float]=None
+            destinations: Optional[GeoSeries] = None, 
+            speed_walking: float=DEFAULT_SPEED_WALKING
         ) -> pd.Series:
         """ 
         Requests walk-only trip matrix from OTP, returing trip duration 
@@ -279,13 +278,13 @@ class OTP2TravelTimeComputer():
         for o_id, o_pt in origins.items():
             for d_id, d_pt in destinations.items():
                 ttm.at[(o_id, d_id)] = self._compute_walk_trip_traveltime(
-                    o_pt, d_pt, speed_walking, False)
+                    o_pt, d_pt, speed_walking)
         return ttm.round(N_DECIMALS)
     
     def compute_bike_traveltime_matrix(
             self, 
             origins: GeoSeries, 
-            destinations: Optional[GeoSeries], 
+            destinations: Optional[GeoSeries] = None, 
             speed_cycling: float = DEFAULT_SPEED_CYCLING, 
             triangle_time_factor: float = 0.5, 
             triangle_slope_factor: float = 0.5, 
@@ -327,8 +326,8 @@ class OTP2TravelTimeComputer():
     def compute_transit_traveltime_matrix(
             self, 
             origins: GeoSeries, 
-            destinations: Optional[GeoSeries], 
-            departure: datetime, 
+            destinations: Optional[GeoSeries] = None, 
+            departure: datetime = datetime.now(), 
             departure_time_window: timedelta = DEFAULT_DEPARTURE_WINDOW, 
             time_increment: timedelta = DEFAULT_TIME_INCREMENT, 
             speed_walking: float=DEFAULT_SPEED_WALKING
