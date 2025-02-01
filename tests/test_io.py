@@ -1,12 +1,13 @@
 from geopandas import GeoSeries
 from importlib.resources import files
+from math import sqrt
 from os import environ
 import numpy as np
 import pandas as pd
 import pandas.testing as tm
 from pathlib import Path
 import pytest
-from shapely.geometry import Point
+from shapely.geometry import Point, Polygon
 
 import accessopp
 import accessopp.io as io
@@ -119,10 +120,57 @@ def test_read_matrix(matrixdata_path):
     )
     tm.assert_series_equal(read_mat, ref_mat)
 
+def test_rect_grid_generation():
+    # Create a grid in UTM zone 17, 
+    # note that x=500000 is the midpoint of a UTM zone
+    centroids, polygons = io.build_rectangle_grid(
+        Point(500000, 0), 100, 100, 300, 200, crs="EPSG:32617")
+    idx = pd.Index(range(6), name='id')
+    ref_centroids = GeoSeries(
+        index=idx,
+        data = [
+            Point(500050, 50),
+            Point(500050, 150),
+            Point(500150, 50),
+            Point(500150, 150),
+            Point(500250, 50),
+            Point(500250, 150),
+        ]
+    )
+    ref_polygons = GeoSeries(
+        index=idx,
+        data=[
+            Polygon((Point(500000, 0), Point(500100, 0), Point(500100, 100), Point(500000, 100), Point(500000, 0))),
+            Polygon((Point(500000, 100), Point(500100, 100), Point(500100, 200), Point(500000, 200), Point(500000, 100))),
+            Polygon((Point(500100, 0), Point(500200, 0), Point(500200, 100), Point(500100, 100), Point(500100, 0))),
+            Polygon((Point(500100, 100), Point(500200, 100), Point(500200, 200), Point(500100, 200), Point(500100, 100))),
+            Polygon((Point(500200, 0), Point(500300, 0), Point(500300, 100), Point(500200, 100), Point(500200, 0))),
+            Polygon((Point(500200, 100), Point(500300, 100), Point(500300, 200), Point(500200, 200), Point(500200, 100)))
+        ]
+    )
+    tm.assert_series_equal(centroids, ref_centroids)
+    tm.assert_series_equal(polygons, ref_polygons)
 
+def test_hex_grid_generation():
+    incr = 100
+    centroids, polygons = io.build_hexagonal_grid(
+        Point(500000, 0), incr, 210, 260, crs="EPSG:32617")
 
+    dy = 0.5 * incr                 # two hex rows define each increment
+    el = incr / sqrt(3)             # edge length
+    half_el = 0.5 * el              # half of the edge length
+    dx = 3.0 * half_el
+    idx = pd.Index(range(4), name='id')
+    ref_centroids = GeoSeries(
+        index=idx,
+        data = [
+            Point(500000 + 2.0*half_el, dy),
+            Point(500000 + 2.0*half_el, 3 * dy),
+            Point(500000 + 5.0*half_el, 2 * dy),
+            Point(500000 + 5.0*half_el, 4 * dy),
+        ],
+        crs="EPSG:32617"
+    )
+    tm.assert_series_equal(centroids, ref_centroids)
 
-
-
-
-
+    # todo: add polygon test

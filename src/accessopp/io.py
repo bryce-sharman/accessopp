@@ -104,11 +104,10 @@ def build_rectangle_grid(
         [range(0, n_x), range(0, n_y)], names=['x', 'y'])
     gs_cntds = GeoSeries(index=mi, crs=utm_proj_str)
     gs_plgns = GeoSeries(index=mi, crs=utm_proj_str)
-
-    for j in range(0, n_y):
+    for j in range(n_y):
         y_j_ll = j * y_incr
         y_j_centr = y_j_ll + y_incr / 2
-        for i in range(0, n_x):
+        for i in range(n_x):
             x_i_ll = i * x_incr
             x_i_centr = x_i_ll + x_incr / 2
             # first the centroid
@@ -120,23 +119,29 @@ def build_rectangle_grid(
                       (x_i_ll, y_j_ll + y_incr )
                       )
             gs_plgns.loc[(i, j)] = Polygon((coords))
+    # Somehow it loses the crs, hence reset it
+    gs_cntds.crs = utm_proj_str
+    gs_plgns.crs = utm_proj_str
 
     # We can do an affine transformation on the series to 1) rotate, and 
     # 2) translate to lower bound convert angle to radians
     angle = angle * pi / 180.0
-    gs_cntds.geometry = gs_cntds.geometry.affine_transform(
+    gs_cntds = gs_cntds.affine_transform(
         [cos(angle), -sin(angle), sin(angle), cos(angle), ll.x, ll.y])
-    gs_plgns.geometry = gs_plgns.geometry.affine_transform(
+    gs_plgns = gs_plgns.affine_transform(
         [cos(angle), -sin(angle), sin(angle), cos(angle), ll.x, ll.y])
-    
     # Convert back to original coordinate system
     gs_cntds = gs_cntds.to_crs(crs)
     gs_plgns = gs_plgns.to_crs(crs)
     # Reset to a single index
-    return gs_cntds.reset_index(drop=True), gs_plgns.reset_index(drop=True)
+    gs_cntds = gs_cntds.reset_index(drop=True)
+    gs_cntds.index.name = 'id'
+    gs_plgns = gs_plgns.reset_index(drop=True)
+    gs_plgns.index.name = 'id'
+    return gs_cntds, gs_plgns
 
 
-def build_haxagonal_grid(
+def build_hexagonal_grid(
         lower_left: Point, 
         incr: float, 
         width: float, 
@@ -170,70 +175,115 @@ def build_haxagonal_grid(
     that covered by one degree of longitude when away from the equator.
 
     """
-    ll, utm_proj_str = project_to_utm_coordinates(lower_left, crs)
 
-    # Make the hex grid 
-    sqrt_3 = sqrt(3)
-    sqrt_3_inv = 1 / sqrt(3)   
-    ri = 0.5 * incr                       
-    ro = incr * sqrt_3_inv                 # Distance of origin to a vertex, also equals length of each side
-    vert_offset = sqrt_3 * ri              # ro + 1/2 length of one side = 3 / sqrt(3) * r_i
+     
+    """  
+    Nomenclature of a hex grid
+               
+    3.0*incr __       _________                   _________ 
+                    /           \               /           \
+                   /             \             /             \
+    2.5*incr __   /    (0,4)      \ _________ /       (2,4)   \_________ 
+                  \               /           \               /          \
+                   \             /             \             /            \
+    2.0*incr __     \ _________ /      (1,3)    \ _________ /    (3,3)     \
+                    /           \               /           \              /
+                   /             \             /             \            /
+    1.5*incr __   /     (0,2)     \ _________ /     (2,2)     \ _________/
+                  \               /           \               /          \
+                   \             /             \             /            \
+    1.0*incr __     \ _________ /      (1,1)    \ _________ /    (3,1)     \
+                    /           \               /           \              /
+                   /             \             /             \            /
+    0.5*incr __   /      (0,0)    \ _________ /       (2,0)   \ _________/ 
+                  \               /           \               /          \
+                   \             /             \             /            \
+          0  __     \ _________ /               \ __________/              \
+    
+    dy=incr/2    |  |     |    |  |    |     |  |     |     |  |    |    |  |
+                 |  |     |    |  |    |     |  |     |     |  |    |    |  |
+    
+                x0 x1    x2    x3 x4   x5   x6 x7     x8    x9 x10  x11 x12 x13
+     
+              x0=0,  el = incr/sqrt_3, half_el = 0.5*incr/sqrt_3        dx = 3.0 * half_el
+              x1=x0+el*cos(60)         x2=x1+el/2                       x3=x2+el/2 
+                =half_el                 =incr/sqrt(3)/2+incr/sqrt_3/2     =incr*sqrt(3)+incr*sqrt(3)/2
+                                         =2*half_el                        =3*half_el
+              x4=x3+el*cos(60)         x5=x4+el/2                      x6=x5+el/2
+                =4*half_el               =5*half_el                      =6*half_el
+
+    Nomenclature of a single hex
+    yt   __       _________   
+                /           \  
+               /             \ 
+    yc   __   /      (0,0)    \
+              \               /
+               \             / 
+    yb   __     \ _________ /  
+             |  |     |    |  |
+             |  |     |    |  |
+            xel xl    xc   xr xer
+    """
+    ll, utm_proj_str = project_to_utm_coordinates(lower_left, crs)
+    dy = 0.5 * incr                 # two hex rows define each increment
+    el = incr / sqrt(3)             # edge length
+    half_el = 0.5 * el              # half of the edge length
+    dx = 3.0 * half_el
+    # keep a hex only if fully contained in the grid, but min of 2
+    ny = max(int((height - dy) / dy), 2)
+    nx = max(int((width - half_el) / dx), 2)
 
     # Make a grid based on a 0, 0 lower corner
     # Then we'll transform it using geoSeries affine transformation
-    n_x = round(width / incr)
-    n_y = round(height / vert_offset)
-
-    mi = pd.MultiIndex.from_product([range(0, n_x), range(0, n_y)])
+    mi = pd.MultiIndex.from_product([range(0, nx), range(0, ny)])
     gs_cntds = GeoSeries(index=mi, crs=utm_proj_str)
     gs_plgns = GeoSeries(index=mi, crs=utm_proj_str)
-    for j in range(0, n_y):
-        if j % 2 == 0:
-            # No offset to first row
-            x_offset = 0.0
-        else:
-            # This is an offset row in the hex
-            x_offset = ri
-
-        y_bottom = j * vert_offset    # 0 for bottom row
-        y_lower = y_bottom + ri * sqrt_3_inv
-        y_middle = y_bottom + ro
-        y_upper = y_lower + ro
-        y_top = y_middle + ro
-
-        for i in range(0, n_x):
-            x_left = i * incr + x_offset
-            x_middle = x_left + ri
-            x_right = x_left + incr
-
+    for j in range(ny):
+        yb = j * dy
+        yc = yb + dy
+        yt = yb + incr
+        for i in range(nx):
+            if (j%2) != (i%2):
+                continue
+            xel = i * 3.0 * half_el
+            xl = xel + half_el
+            xc = xl + half_el
+            xr = xc + half_el
+            xer = xr + half_el
             # first the centroid
-            gs_cntds.loc[(i, j)] = Point(x_middle, y_middle)
+            gs_cntds.loc[(i, j)] = Point(xc, yc)
             # and now the polygons
             coords = (
-                (x_middle, y_bottom), 
-                (x_right, y_lower), 
-                (x_right, y_upper), 
-                (x_middle, y_top), 
-                (x_left, y_upper), 
-                (x_left, y_lower)
+                (xl, yb), 
+                (xr, yb), 
+                (xer, yc), 
+                (xr, yt), 
+                (xl, yt), 
+                (xel, yc),
+                (xl, yb)
             )
             gs_plgns.loc[(i, j)] = Polygon((coords))
-    
+    # Somehow it loses the crs in the above code, hence reset it
+    gs_cntds.crs = utm_proj_str
+    gs_plgns.crs = utm_proj_str
     # We can do an affine transformation on the series to 1) rotate, and 
     # 2) translate to lower bound convert angle to radians
+    gs_cntds = gs_cntds.dropna()
+    gs_plgns = gs_plgns.dropna()
     angle = angle * pi / 180.0
-    gs_cntds.geometry = gs_cntds.geometry.affine_transform(
+    gs_cntds = gs_cntds.affine_transform(
         [cos(angle), -sin(angle), sin(angle), cos(angle), ll.x, ll.y])
-    gs_plgns.geometry = gs_plgns.geometry.affine_transform(
+    gs_plgns = gs_plgns.affine_transform(
         [cos(angle), -sin(angle), sin(angle), cos(angle), ll.x, ll.y])
-    
     # Convert back to original coordinate system
     gs_cntds = gs_cntds.to_crs(crs)
     gs_plgns = gs_plgns.to_crs(crs)
-
     # Reset to a single index
-    return gs_cntds.reset_index(drop=True), gs_plgns.reset_index(drop=True)
-
+    gs_cntds = gs_cntds.reset_index(drop=True)
+    gs_cntds.index.name = 'id'
+    gs_plgns = gs_plgns.reset_index(drop=True)
+    gs_plgns.index.name = 'id'
+    return gs_cntds, gs_plgns
 
 def read_matrix(fp: PathLike) -> pd.Series:
     """ Reads a previously calculated matrix from CSV file.
