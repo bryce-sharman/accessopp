@@ -1,224 +1,198 @@
+""" 
+Module with function that calculate various access to opportunities 
+measures given a cost matrix and optional weights. 
+"""
+
+from collections.abc import Callable
 import numpy as np
 import pandas as pd
+from typing import Dict, Optional
 
-""" Module with function that calculate access to opportunities given a cost matrix and optional weights. """
+from accessopp.enumerations import INDEX_COLUMNS
 
-def process_cost_matrix(df, fill_value=np.NaN):
-    """ 
-    Process cost matrix from tall format produced by OTP2TravelTimeComputer and
-    R5PYTravelTimeComputer to a wide format suitable for accessibility calculations.
-    
-    Paramters
-    ---------
-    df: pandas.DataFrame
-        Cost matrix in format produced by OTP2TravelTimeComputer and R5PYTravelTimeComputer.
-        This format expects the following columns: 'from_id', 'to_id', 'travel_time'.
-        The index is not used.
-    fill_value: float, optional
-        Value with which to fill any blanks in the matrix after post-processing
-
-    Returns:
-    pd.DataFrame
-        cost matrix in wide format, with indices corresponding to 'from_id`, `to_id`
-
-    """
-    s = df.set_index(['from_id', 'to_id']).squeeze()
-    return s.unstack(fill_value=fill_value)
 
 
 #region Impedance Functions
-def within_threshold(df, threshold):
-    """ Calculates impedance matrix assuming cumulative opportunities (1 if cost is within threshold, 0 otherwise)
+def within_threshold(cm: pd.Series, threshold: float) -> pd.DataFrame:
+    """ 
+    Calculates impedance matrix assuming cumulative opportunities 
+    (1 if cost is within threshold, 0 otherwise).
 
-    Parameters
-    ----------
-    df: pd.DataFrame
-        Cost matrix in format produced by OTP2TravelTimeComputer and R5PYTravelTimeComputer.
-    threshold: float or int
-        threshold to test, should be real number > 0
+    Args:
+        - cm: Cost matrix as produced by travel time calculators
+        - threshold: threshold to test, should be real number > 0
 
-    Returns
-    -------
-    pd.DataFrame
-        Impedance matrix in wide format.
+    Returns:
+        - Impedance matrix in wide format.
 
     """
-    cost_matrix = process_cost_matrix(df)
-    cm = cost_matrix.to_numpy()
-    impedance = np.where(cm <= threshold, 1, 0)
+    if threshold <= 0:
+        return ValueError('threshold argument must be > 0')
+    cm = cm.unstack()
+    cmnp = cm.to_numpy()
     return_df = pd.DataFrame(
-        data=impedance, 
-        index=cost_matrix.index, 
-        columns=cost_matrix.columns, 
-        dtype=np.int32
+        data=np.where(cmnp <= threshold, 1, 0), 
+        index=cm.index, 
+        columns=cm.columns, 
+        dtype=np.int64
     )
-    return_df.index.name = "from_id"
-    return_df.columns.name = "to_id"
-    return_df.name="within_threshold_impedance"
+    return_df.name = "within_threshold_impedance"
     return return_df
 
-def negative_exp(df, beta):
+def negative_exp(cm: pd.Series, beta: float) -> pd.DataFrame:
     """ Calculates impedance matrix assuming negative exponential decay function.
 
-    Parameters
-    ----------
-    df: pd.DataFrame
-        Cost matrix in format produced by OTP2TravelTimeComputer and R5PYTravelTimeComputer.
-    beta: float
-        beta parameter of negative exponential function. Should be a real number < 0.
+    Args:
+        - cm: Cost matrix as produced by travel time calculators
+        - beta: beta parameter of negative exponential function. 
+                Should be a real number < 0.
 
-    Returns
-    -------
-    pd.DataFrame
-        Impedance matrix in wide format.
+    Returns:
+        - Impedance matrix in wide format.
 
     """
-    cost_matrix = process_cost_matrix(df)
     if beta >= 0:
         raise ValueError("Expecting negative `beta` parameter.")
-    cm = cost_matrix.to_numpy()
-    impedance = np.exp(beta * cm)
+    cm = cm.unstack()
+    cmnp = cm.to_numpy()
     return_df = pd.DataFrame(
-        data=impedance, 
-        index=cost_matrix.index, 
-        columns=cost_matrix.columns, 
+        data=np.exp(beta * cmnp), 
+        index=cm.index, 
+        columns=cm.columns, 
         dtype=np.float64
     )
-    return_df.index.name = "from_id"
-    return_df.columns.name = "to_id"
     return_df.name="neg_exp_impedance"
     return return_df
 
-
-def gaussian(df, sigma):
+def gaussian(cm: pd.Series, sigma: float) -> pd.DataFrame:
     """ Calculates impedance matrix assuming Gaussian decay function.
 
-    Parameters
-    ----------
-    df: pd.DataFrame
-        Cost matrix in format produced by OTP2TravelTimeComputer and R5PYTravelTimeComputer.
-    sigma: float
-        standard deviation parameter of Guassian function, should be float > 0.
+    Args:
+        - cm: Cost matrix as produced by travel time calculators
+        - sigma: standard deviation parameter of Guassian function, 
+                 should be float > 0.
     
-    Returns
-    -------
-    pd.DataFrame
-        Impedance matrix in wide format.
+    Returns:
+        - Impedance matrix in wide format.
 
-    """    
-    cost_matrix = process_cost_matrix(df)
+    """   
     if sigma <= 0:
         raise ValueError("Expecting positive `sigma` parameter.")
-    cm = cost_matrix.to_numpy()
-    impedance = np.exp(-(cm * cm) / (2 * sigma * sigma))
+    cm = cm.unstack()
+    cmnp = cm.to_numpy()
     return_df = pd.DataFrame(
-        data=impedance, 
-        index=cost_matrix.index, 
-        columns=cost_matrix.columns, 
+        data=np.exp(-(cmnp * cmnp) / (2 * sigma * sigma)), 
+        index=cm.index, 
+        columns=cm.columns, 
         dtype=np.float64
     )
-    return_df.index.name = "from_id"
-    return_df.columns.name = "to_id"
     return_df.name="gaussian_impedance"
     return return_df
 
-# #endregion
-    
-#region Primary access measures  (cumulative opportunities)
-def calc_impedance_matrix(df, impedance_function, **kwargs):
-    """ Calculates the impedance matrix given the stored cost matrix, saving in .impedance_matrix attribute. 
-    
-    Parameters
-    ----------
-    df: pandas.DataFrame
-        Cost matrix in format produced by OTP2TravelTimeComputer and R5PYTravelTimeComputer.
-        This format expects the following columns: 'from_id', 'to_id', 'travel_time'.
-        The index is not used.
+#endregion
 
-    impedance_function: function
-        One of the impedance functions specified in this module. Current options are:
-            within_threshold - for cumulative opportunities access
-            negative_exp - for negative exponential gravity model
-            gaussian - for gaussian weighted gravity model
+#region Dual access measures
+def has_opportunity(cm: pd.Series, threshold: float) -> pd.Series:
+    """ Calculates if opportunity exists within threshold for each origin.
 
-    **kwargs:
-        parameters expected by impedance function.
+    Args:
+        - cm: Cost matrix as produced by travel time calculators
+        - threshold: threshold to test, should be real number > 0
 
-    Returns
-    -------
-    pd.DataFrame
-        Impedance matrix in wide format.
+    Returns:
+       - pandas Series: 1 if any opportunity is within threshold, 0 otherwise
 
     """
-    return impedance_function(df, **kwargs)
+    return within_threshold(cm, threshold).max(axis=1)
 
+def closest_opportunity(cm: pd.Series) -> pd.Series:
+    """ Calculates cost to the closest opportunity from each origin.
+
+    Args:
+        - cm: Cost matrix as produced by travel time calculators
+
+    Returns:
+       - Closest opportunity from each origin.
+
+    """
+    cm = cm.unstack()
+    cmnp = cm.to_numpy()
+    return pd.Series(
+        index=cm.index,
+        data=np.min(cmnp, axis=1, initial=10000.0, where=np.isfinite(cmnp))
+    )
+ 
+def nth_closest_opportunity(cm: pd.Series, n: int):
+    """ Calculates cost to the nth closest opportunity from each origin.
+
+    Args:
+        - cm: Cost matrix as produced by travel time calculators
+        - n: Nth-opportunity to which to calculate cost,  >= 2.
+
+    Returns:
+       - nth-closest opportunity from each origin.
+
+    """
+    if n < 2:
+        raise ValueError('Parameter `n` should be an integer >= 2.')
+    cm = cm.unstack()
+    cmnp = cm.to_numpy()
+    return pd.Series(
+        index=cm.index,
+        data=np.sort(cmnp, axis=1)[:, n-1]
+    )
+
+#endregion
+
+#region Primary access measures  (cumulative opportunities)
 def calc_spatial_access(
-        c_ij, impedance_func, o_j=None, p_i=None, normalize="none", **kwargs):
-    """ Calculates spatial access to opportunities. 
+        cm: pd.Series, 
+        impedance_func: Callable, 
+        o_j: pd.Series,
+        p_i: Optional[pd.Series]=None, 
+        normalize: str="none", 
+        **kwargs
+    ) -> pd.Series | float:
+    """ 
+    Calculates non-competitive -- such as cumulative opportunities
+    and weighted gravity -- spatial access to opportunities. 
 
-    These measures include cumulative opportunities, weighted gravity and 
-    competitive (not yet implemented) measures.
-    
-    Parameters
-    ----------
-    c_ij: pandas.DataFrame
-        Cost matrix from origin i to destination j in format produced by 
-        OTP2TravelTimeComputer and R5PYTravelTimeComputer.This format expects 
-        the following columns: 'from_id', 'to_id', 'travel_time'. 
-        The index is not used.
-
-    impedance_func: function
-        One of the impedance functions specified in this module.
-            within_threshold - for cumulative opportunities access
-            negative_exp - for negative exponential gravity model
-            gaussian - for gaussian weighted gravity model
-
-    o_j: pd.Series, optional
-        Opportunties at destination j. If None then 
-        weights 1.0 are assigned. Index must match cost_matrix columns.
-
-    p_i: pd.Series, optional
-        Population at origin i. If defined, will calculate a weighted
-        access to opportunities all origins into a single number. 
-        Index must match cost_matrix index.
-
-    normalize: str
-        one of the following options:
+    Args:
+        - cm: Cost matrix as produced by travel time calculators
+        - impedance_func: One of the provided impedance functions:
+            - within_threshold - for cumulative opportunities access
+            - negative_exp - for negative exponential weighted gravity model
+            - gaussian - for gaussian weighted gravity model
+        - o_j: Opportunties at destination j.
+        - p_i: Population at origin i, optional. 
+            If defined, will calculate a weighted access to opportunities all 
+            origins to produce a total (float) for the region.
+        - normalize: one of the following options:
             "median": normalize access with respect to median access
             "average": normalize access with respect to average access
             "maximum": normalize access with respect to highest access
             "none": do not normalize. This is the default option
-        This parameter is ignored if origin_weights is defined.
+            This parameter is ignored if p_i is defined.
+        - **kwargs: parameters expected by impedance function.
 
-    **kwargs:
-        parameters expected by impedance function.
-
-    Returns
-    -------
-    pandas.Series or float
-        if origin_weights is not defined, returns pandas.Series with the 
-            access to opportinities for each origin.
-        if origin_weights is defined, retuns float with the total access to 
-            opportunities for all origins.
+    Returns:
+        pandas.Series or float
+            if p_i is not defined, returns pandas.Series with the 
+                access to opportinities for each origin.
+            if p_i is defined, retuns float with the total access to 
+                opportunities for all origins.
     """
     if normalize not in ['median', 'average', 'maximum', 'none']:
         raise ValueError('Invalid `normalize` parameter. ')
+    f_ij = impedance_func(cm, **kwargs)
 
-    f_ij = calc_impedance_matrix(c_ij, impedance_func, **kwargs)
+    if not o_j.index.equals(f_ij.columns):
+        print('Reindexing destination weights to match cost matrix columns.')
+        o_j = o_j.reindex(f_ij.columns, fill_value=0.0)
+    mul = f_ij.multiply(o_j)
+    destination_access = mul.sum(axis=1)
 
-    if o_j is None:
-        destination_access = pd.Series(
-            index=f_ij.index, data=f_ij.sum(axis=1))
-    else:
-        if not o_j.index.equals(f_ij.columns):
-            print('Reindexing destination weights vector '
-                  'to match cost matrix columns.')
-            o_j = o_j.reindex(f_ij.columns, fill_value=0.0)
-
-        mul = f_ij.multiply(o_j)
-        destination_access = mul.sum(axis=1)
-
-    if p_i is not None:
+    if isinstance(p_i, pd.Series) and len(p_i) > 0:
         if not p_i.index.equals(f_ij.index):
             p_i = p_i.reindex(f_ij.index, fill_value=0.0)
             print('Reindex origin weights vector to mach cost_matrix` index.')
@@ -231,55 +205,26 @@ def calc_spatial_access(
             return destination_access / destination_access.mean()
         elif normalize == "max":
             return destination_access / destination_access.max()
-        else:
+        else:  # 'none'
             return destination_access
+  
+
 
 
 def calc_spatial_availability(
-        c_ij, impedance_func, o_j, p_i, alpha=1.0, **kwargs):
+        cm: pd.Series, 
+        impedance_func: Callable, 
+        o_j: pd.Series,
+        p_i: pd.Series, 
+        alpha: float=1.0, 
+        **kwargs
+    ):
     """ Calculates competitive access to opportunities.
 
     This function calculates the availability -- new name as it reflects 
     opportunities that can be 'claimed' and not just accessed -- 
     presented in Soukhov et al., see citation in the note, below.
-    
-    Parameters
-    ----------
-    c_ij: pandas.DataFrame
-        Cost matrix from origin i to destination j in format produced by 
-        OTP2TravelTimeComputer and R5PYTravelTimeComputer.This format expects 
-        the following columns: 'from_id', 'to_id', 'travel_time'. 
-        The index is not used.
 
-    impedance_func: function
-        One of the impedance functions specified in this module.
-            within_threshold - for cumulative opportunities access
-            negative_exp - for negative exponential gravity model
-            gaussian - for gaussian weighted gravity model
-
-    o_j: pd.Series
-        Opportunities at destination j. Index must match cost_matrix 
-        destinations.
-
-    p_i: pd.Series
-        Population at origin i. Index must match cost_matrix origins.
-
-    alpha: optional
-        Modulates the effect of demand by population. When alpha < 1, 
-        opportunities are allocated more rapidly to smaller centers relative 
-        to larger ones; alpha > 1 achieves the opposite effect.
-        Defaults to 1.0. 
-
-    **kwargs:
-        parameters expected by impedance function.
-
-    Returns
-    -------
-    pandas.Series
-        Availability of opportunities by origin i. 
-
-    Note
-    ----
     This code is a single mode version of the competitive accessibility shown
     in the following paper. 
 
@@ -287,15 +232,31 @@ def calc_spatial_availability(
     availability, a singly-constrained measure of competitive accessibility. 
     PLoS ONE 18(1): e0278468. https://doi.org/10.1371/journal.pone.0278468
 
-    """
+    Args:
+        - cm: Cost matrix as produced by travel time calculators
+        - impedance_func: One of the provided impedance functions:
+            - within_threshold - for cumulative opportunities access
+            - negative_exp - for negative exponential weighted gravity model
+            - gaussian - for gaussian weighted gravity model
+        - o_j: Opportunties at destination j.
+        - p_i: Population at origin i.
+        - alpha: Modulates the effect of demand by population. When alpha < 1, 
+            opportunities are allocated more rapidly to smaller centers relative 
+            to larger ones; alpha > 1 achieves the opposite effect.
+            Defaults to 1.0. 
+        - **kwargs: parameters expected by impedance function.
 
+    Returns:
+        - availability of opportunities by origin i. 
+
+    """
     # calculate population balancing factor, F^p_{ij}
     p_i_alpha = p_i.pow(alpha)
     sum_p_i_alpha = p_i_alpha.sum()
     f_p_i = p_i_alpha / sum_p_i_alpha
 
     # Calculate the cost balancing factor, F^c_{ij}
-    f_ij = calc_impedance_matrix(c_ij, impedance_func, **kwargs)
+    f_ij = impedance_func(cm, **kwargs)
     sum_i_fij = f_ij.sum(axis=0)
     f_c_ij = f_ij / sum_i_fij
 
@@ -310,100 +271,92 @@ def calc_spatial_availability(
     return v_i
 
 
-def calc_spatial_heterogeneous_availability(population_segments, o_j, alpha=1.0):
+def calc_spatial_heterogeneous_availability(
+        population_segments: Dict, 
+        o_j, 
+        alpha=1.0
+    ) -> Dict:
     """ Calculates competitive access for a heterogeneous population.
 
     This function calculates the availability -- new name as it reflects 
     opportunities that can be 'claimed' and not just accessed -- 
-    presented in Soukhov et al., see citation in the note, below.
+    presented in the following paper:
     
-    Parameters
-    ----------
-    population_segments: dictionary
-        Defined as a one-character label for each key, and a sub-dictionary 
-        defining the cost_impedance function for that mode using the following 
-        keys:
-
-        'p_i': pd.Series
-            Population this category at origin i. Index must match 
-            cost_matrix origins.
-        'c_ij': pandas.DataFrame
-            Cost matrix from origin i to destination j in format produced by 
-            OTP2TravelTimeComputer and R5PYTravelTimeComputer.This format expects 
-            the following columns: 'from_id', 'to_id', 'travel_time'. 
-            The index is not used.
-        'impedance_func': function
-            One of the impedance functions specified in this module.
-                within_threshold - for cumulative opportunities access
-                negative_exp - for negative exponential gravity model
-                gaussian - for gaussian weighted gravity model
-        'threshold': int or float:
-            threshold used for within_threshold impedance function.
-        'beta': float
-            beta parameter of negative_exp function. Should be real number < 0.
-        'sigma': float
-            standard deviation parameter of Guassian function.
-            Should be a real number > 0.
-
-
-    o_j: pd.Series
-        Opportunities at destination j. Index must match cost_matrix 
-        destinations. Opportunities are assumed to be accessible by 
-        all people, regardless of population category.
-
-    alpha: optional
-        Modulates the effect of demand by population. When alpha < 1, 
-        opportunities are allocated more rapidly to smaller centers relative 
-        to larger ones; alpha > 1 achieves the opposite effect.
-        Defaults to 1.0. 
-
-    Returns
-    -------
-    pandas.Series
-        Availability of opportunities by origin i. 
-
-    Note
-    ----
-    This code is a single mode version of the competitive accessibility shown
-    in the following paper. 
-
     Soukhov A, Tarriño-Ortiz J, Soria-Lara JA, Pa´ez A (2024) Multimodal spatial 
     availability: A singly-constrained measure of accessibilityconsidering 
     multiple modes. PLoS ONE 19(2): e0299077. 
     https://doi.org/10.1371/journal.pone.0299077
+
+    Args:
+        - population_segments: dictionary
+            Dictonary with defining population and impedances
+            for all population segments. Each dictionary value is a 
+            sub-dictionary defined as follows:
+            - 'p_i': pd.Series
+                Population this category at origin i. Index must match 
+                cost_matrix origins.
+            - 'c_ij': pandas.DataFrame
+                Cost matrix from origin i to destination j in format produced by 
+                OTP2TravelTimeComputer and R5PYTravelTimeComputer.This format expects 
+                the following columns: 'from_id', 'to_id', 'travel_time'. 
+                The index is not used.
+            - 'impedance_func': function
+                One of the impedance functions specified in this module.
+                    within_threshold - for cumulative opportunities access
+                    negative_exp - for negative exponential gravity model
+                    gaussian - for gaussian weighted gravity model
+            - 'threshold': int or float:
+                threshold used for within_threshold impedance function.
+            - 'beta': float
+                beta parameter of negative_exp function. 
+                Should be real number < 0.
+            - 'sigma': float
+                standard deviation parameter of Guassian function.
+                Should be a real number > 0.
+        - o_j: Opportunities at destination j. Index must match cost_matrix 
+            destinations. Opportunities are assumed to be accessible by 
+            all people, regardless of population category.
+        - alpha: Modulates the effect of demand by population. When alpha < 1, 
+            opportunities are allocated more rapidly to smaller centers relative 
+            to larger ones; alpha > 1 achieves the opposite effect.
+            Defaults to 1.0. 
+
+    Returns:
+        - Dictionary contain availability of opportunities by origin i for
+            each population segment. 
 
     """
     # Basic input validation and create dictionary to hold results
     reqd_keys = ['p_i', 'c_ij', 'impedance_func']
     kwargs = {}
     for pop_label, pop_def in population_segments.items():
-
-        if len(pop_label) != 1:
-            raise ValueError("Population segments must be defined by a "
-                             "one-character label.")
         for rk in reqd_keys:
             if rk not in pop_def.keys():
-                raise AttributeError(f"Keys {reqd_keys} must be defined for "
-                                     f"each population segment.")
+                raise AttributeError(
+                    f"{reqd_keys} must be defined for each population segment.")
         kwargs[pop_label] = {}
         if pop_def['impedance_func'] == within_threshold:
             if 'threshold' not in pop_def.keys():
-                raise AttributeError("threshold must be defined for "
-                                     "within_threshold impedance function.")
+                raise AttributeError(
+                    "threshold must be defined for "
+                    "within_threshold impedance function.")
             kwargs[pop_label]['threshold'] = pop_def['threshold']
         elif pop_def['impedance_func'] == negative_exp:
             if 'beta' not in pop_def.keys():
-                raise AttributeError("beta must be defined for "
-                                     "negative_exp impedance function.")
+                raise AttributeError(
+                    "beta must be defined for "
+                    "negative_exp impedance function.")
             kwargs[pop_label]['beta'] = pop_def['beta']
         elif pop_def['impedance_func'] == gaussian:
             if 'sigma' not in pop_def.keys():
-                raise AttributeError("sigma must be defined for "
-                                     "gaussian impedance function.")
+                raise AttributeError(
+                    "sigma must be defined for "
+                    "gaussian impedance function.")
             kwargs[pop_label]['sigma'] = pop_def['sigma']
         else:
-            raise ValueError(f"impedance_func must be one of: "
-                             "within_threshold, negative_exp, gaussian")
+            raise ValueError(
+                "impedance_func must be one of: "
+                "within_threshold, negative_exp, gaussian")
 
     # calculate scaled population, by population subgroup, $f^{pm}_i$  
     p_i = {}       # This term holds the scaled population
@@ -419,17 +372,17 @@ def calc_spatial_heterogeneous_availability(population_segments, o_j, alpha=1.0)
         f_pm_i[pop_label] = p_i[pop_label] / total_scaled_pop
 
     # Calculate the cost balancing factor, $F^{cm}_{ij}$
-    # Read a cost matrix, just to find the indices to create our 
+    # Read a cost matrix just to find the indices to create our 
     # summation vector
     int_f_cm_ij = {}   # numerator (impedance function of each mode)
     f_cm_ij = {}       # final scaled factor
                        # for each mode this a matrix
     first_key = list(population_segments.keys())[0]
-    c_ij = process_cost_matrix(population_segments[first_key]['c_ij'])
+    c_ij = population_segments[first_key]['c_ij'].unstack()
     denom_f_cm_ij = pd.Series(index=c_ij.columns, data=0.0)
     for pop_label, pop_def in population_segments.items():
-        int_f_cm_ij[pop_label] = calc_impedance_matrix(
-            pop_def['c_ij'], pop_def['impedance_func'], **kwargs[pop_label])
+        int_f_cm_ij[pop_label] = pop_def['impedance_func'](
+            pop_def['c_ij'], **kwargs[pop_label])
         sum_over_i = int_f_cm_ij[pop_label].sum(axis=0)
         denom_f_cm_ij = denom_f_cm_ij + sum_over_i
     for pop_label, pop_def in population_segments.items():
@@ -456,81 +409,3 @@ def calc_spatial_heterogeneous_availability(population_segments, o_j, alpha=1.0)
     return v_i
 
     
-#region Dual access measures
-def has_opportunity(c_ij: pd.DataFrame, threshold: int | float):
-    """ Calculates whether any opportunities are within threshold cost. 
-
-    Parameters
-    ---------
-    c_ij: pandas.DataFrame
-        Cost matrix from origin i to destination j in format produced by 
-        OTP2TravelTimeComputer and R5PYTravelTimeComputer.This format expects 
-        the following columns: 'from_id', 'to_id', 'travel_time'. 
-        The index is not used.
-    threshold: float or int
-        threshold to test, should be real number > 0
-
-    Returns
-    -------
-    pandas.Series
-        1 if any opportunity is within threshold, 0 otherwise
-
-     """
-    test_within_threshold = calc_impedance_matrix(
-        c_ij, within_threshold, threshold=threshold)
-    return test_within_threshold.max(axis=1)
-    
-def closest_opportunity(c_ij: pd.DataFrame):
-    """ Calculates cost to the closest opportunity from each origin.
-
-    Parameters
-    ---------
-    c_ij: pandas.DataFrame
-        Cost matrix from origin i to destination j in format produced by 
-        OTP2TravelTimeComputer and R5PYTravelTimeComputer.This format expects 
-        the following columns: 'from_id', 'to_id', 'travel_time'. 
-        The index is not used.
-
-    Returns
-    -------
-    pandas.Series
-        Closest opportunity from each origin.
-
-    """
-    cost_matrix = process_cost_matrix(c_ij)
-    cm = cost_matrix.to_numpy()
-    data = np.min(cm, axis=1, initial=10000.0, where=np.isfinite(cm))
-    index = cost_matrix.index
-    return pd.Series(data=data, index=index)
-
-def nth_closest_opportunity(c_ij, n):
-    """ Calculates cost to the nth closest opportunity from each origin.
-
-    Parameters
-    ----------
-    c_ij: pandas.DataFrame
-        Cost matrix from origin i to destination j in format produced by 
-        OTP2TravelTimeComputer and R5PYTravelTimeComputer.This format expects 
-        the following columns: 'from_id', 'to_id', 'travel_time'. 
-        The index is not used.
-    n: int
-        Nth-opportunity to which to calculate cost. Expecting an integer >= 2.
-
-    Returns
-    -------
-    pandas.Series
-        pandas series where the index is the same as that of the cost_matrix
-        Each value corresponds to the nth-closest opportunity from the origin.
-
-    """
-    if not isinstance(n, int):
-        raise AttributeError('Parameter `n` should be an integer >= 2.')
-    if not n >= 2:
-        raise ValueError('Parameter `n` should be an integer >= 2.')
-    cost_matrix = process_cost_matrix(c_ij)
-    cm = cost_matrix.to_numpy()
-    data = np.sort(cm, axis=1)[:, n-1]
-    index=cost_matrix.index
-    return pd.Series(data=data, index=index)
-
-#endregion
