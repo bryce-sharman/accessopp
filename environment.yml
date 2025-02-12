@@ -4,10 +4,8 @@ channels:
 
 # I had some issues running OGR directly from a command line with 
 # the default r5py installation. Trying to resolve this by constraining
-# the versions. Test later on to see if we can remove specifying 
-# fiona and pyogrio in this file to use the one coming directly from r5py.
+# the versions. 
 
-# I just added the jpype requirement, but I haven't tested it yet.
 dependencies:
   - python=3.11
   - pyogrio=0.7.*
@@ -17,5 +15,4 @@ dependencies:
   - jupyterlab
   - yaml
   - openpyxl
-  - install-jdk=17
   - pytest

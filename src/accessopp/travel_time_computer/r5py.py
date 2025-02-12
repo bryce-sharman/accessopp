@@ -1,9 +1,10 @@
 from datetime import datetime, timedelta
-from geopandas import GeoSeries
+from geopandas import GeoSeries, points_from_xy
 from os import PathLike
 import pandas as pd
 from pathlib import Path
 from typing import List, Optional
+import zipfile
 
 import r5py
 
@@ -50,7 +51,7 @@ class R5PYTravelTimeComputer():
             destinations: Optional[GeoSeries], 
             speed_walking: float = DEFAULT_SPEED_WALKING,
             **kwargs
-        ) -> pd.DataFrame:
+        ) -> pd.Series:
         """
         Requests walk-only trip matrix from r5py, returing trip duration 
         in seconds.
@@ -97,7 +98,7 @@ class R5PYTravelTimeComputer():
             destinations: Optional[GeoSeries], 
             speed_cycling: float = DEFAULT_SPEED_CYCLING,
             **kwargs
-        ) -> pd.DataFrame:
+        ) -> pd.Series:
         """
         Requests walk-only trip matrix from r5py, returing trip duration 
         in seconds.
@@ -197,6 +198,45 @@ class R5PYTravelTimeComputer():
         return self._convert_tt_matrix(df)
 
     
+    def compute_walk_traveltime_matrix_to_transit_stops(
+            self, 
+            origins: GeoSeries, 
+            gtfs_path: PathLike, 
+            speed_walking: float = DEFAULT_SPEED_WALKING,
+            **kwargs
+        ) -> pd.Series:
+        """
+        Requests walk-only trip matrix from r5py between origins and all
+        stops defined inthe GTFS stops file.
+
+        Args:
+            - origins: Origin points.  Index is the point ids.
+            - gtfs_path: Path to the GTFS file containing transit schedule.
+            = speed_walking: Walking speed in kilometres per hour. If None then
+                this is set to the default walk speed; currently 5 km/hr.
+            - **kwargs:
+                 Additional parameters to be passed into r5py.TravelTimeMatrixComputer
+                 https://r5py.readthedocs.io/en/stable/reference/reference.html#r5py.TravelTimeMatrixComputer.compute_travel_times
+                 Commonly used kwargs include:
+                     max_time:  maximum trip duration 
+
+        Returns:
+            Travel times matrix in stacked (tall) format between origins
+                and all stops defined in the GTFS stops file. 
+
+        """
+        with zipfile.ZipFile(gtfs_path) as zf:
+            stops = zf.open("stops.txt")
+            df = pd.read_csv(stops, usecols=['stop_id', 'stop_lat', 'stop_lon'])
+            destinations = GeoSeries(
+                index=df['stop_id'],
+                data = points_from_xy(
+                    df['stop_lon'], df['stop_lat'], crs="EPSG:4326")
+            )
+        return self.compute_walk_traveltime_matrix(
+            origins, destinations, speed_walking=speed_walking, **kwargs)
+
+
     @staticmethod
     def _convert_tt_matrix(tt):
         tt = tt.set_index(['from_id', 'to_id']).squeeze()
