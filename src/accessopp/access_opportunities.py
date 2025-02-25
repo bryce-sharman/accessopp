@@ -8,10 +8,11 @@ from collections.abc import Callable
 import numpy as np
 from os import PathLike
 import pandas as pd
-from typing import Dict, Optional, List
+from typing import Dict, Optional, List, Tuple
 import zipfile
 
-
+from accessopp.enumerations import GTFS_MODE_MAPPING
+from accessopp.enumerations import INDEX_COLUMNS, COST_COLUMN
 
 #region Impedance Functions
 def within_threshold(cm: pd.Series, threshold: float) -> pd.DataFrame:
@@ -214,9 +215,10 @@ def calc_walk_access_to_transit(
         cm: pd.Series, 
         gtfs_path: PathLike, 
         day: date,
-        start_time: time,
-        end_time: time,
+        window_start: time,
+        window_end: time,
         impedance_func: Callable, 
+        mode_weights: Dict | None = None,
         **kwargs
     ) -> pd.Series | float:
     """ 
@@ -232,12 +234,13 @@ def calc_walk_access_to_transit(
             be extended to the other travel time computers in the future. )
         - gtfs_path: Path to the GTFS file containing transit schedule.        
         - day: date of transit service
-        - start_time: start of time interval of interest
-        - end_time: end of time interval of interest
+        - window_start: start of time window of interest
+        - window_end: end of time window of interest
         - impedance_func: One of the provided impedance functions:
             - within_threshold - for cumulative opportunities access
             - negative_exp - for negative exponential weighted gravity model
             - gaussian - for gaussian weighted gravity model
+        - mode_weights: Optional parameter to weight. 
         - **kwargs: parameters expected by impedance function.
 
     Returns:
@@ -247,11 +250,33 @@ def calc_walk_access_to_transit(
             if p_i is defined, retuns float with the total access to 
                 opportunities for all origins.
     """
+    mode_weights = validate_mode_weights(mode_weights)
     service_ids = _identify_gtfs_serviceids_on_day(gtfs_path, day)
-    trip_ids = _find_gtfs_trips(gtfs_path, service_ids)
-    stop_weights = _calc_stop_weights(gtfs_path, trip_ids, start_time, end_time)
-    return calc_spatial_access(
-        cm, impedance_func, stop_weights, **kwargs)
+    if len(service_ids) == 0:
+        raise ValueError(
+            'No GTFS service IDs have service on provided date')
+    trips = _find_gtfs_trips(gtfs_path, service_ids)
+    trips = _merge_trip_modes(gtfs_path, trips, mode_weights)
+    
+    # Read in and filter stop times to valid trips and within time window
+    start_elapsed_seconds, end_elapsed_seconds = \
+        _calc_window_start_end_duration(window_start, window_end)
+    st_raw = _read_stoptimes(gtfs_path)
+    st = _filter_stop_times(
+        st_raw, trips.index, start_elapsed_seconds, end_elapsed_seconds)
+    
+    # Find the closest travel times from each origin to each trip
+    cmts = _calc_origin_to_trip_costmatrix(cm, trips.index, st)
+
+    walk_acc2transit = calc_spatial_access(
+        cmts, impedance_func, o_j=trips['mode_wt'],
+        p_i=None, **kwargs)
+    
+    # Scale by the duration of the time interval
+    walk_acc2transit = walk_acc2transit / ((
+        end_elapsed_seconds - start_elapsed_seconds) / 3600.0)
+    return walk_acc2transit
+
 
 def calc_spatial_availability(
         cm: pd.Series, 
@@ -455,6 +480,100 @@ def calc_spatial_heterogeneous_availability(
 
 
 #region Helper functions to read GTFS files
+def _calc_elapsed_seconds(t: time):
+    ''' 
+    Calculate elapsed seconds in the day manually to ensure that the date 
+    is not in the timedelta calculations.
+    '''
+    return 3600 * t.hour + 60 * t.minute + t.second
+
+def _calc_window_start_end_duration(
+        window_start: time, window_end: time
+    ) -> Tuple[int, int]:
+    ''' 
+    Calculate the time window start and end in elapsed seconds from midnight.
+    '''
+    start_elapsed_seconds = _calc_elapsed_seconds(window_start)
+    end_elapsed_seconds = _calc_elapsed_seconds(window_end)
+    return start_elapsed_seconds, end_elapsed_seconds
+
+def _filter_stops_in_time_window(
+        st: pd.DataFrame, 
+        start_elapsed_seconds: int,
+        end_elapsed_seconds: int
+    ) -> pd.DataFrame:
+    ''' 
+    Return a subset of the stop_times table only keeping stops in the 
+    time window, inclusive of start_time and exclusive of end time.
+    '''
+    st[['hour', 'minute', 'seconds']] = st[
+        'departure_time'].str.split(':', expand=True)
+    st['elapsed_seconds'] = \
+        3600 * st['hour'].astype(np.int64) \
+        + 60 * st['minute'].astype(np.int64) \
+        +  st['seconds'].astype(np.int64)
+    fltr = (st['elapsed_seconds'] >= start_elapsed_seconds) & (
+        st['elapsed_seconds'] < end_elapsed_seconds)
+    return st.loc[fltr].copy()
+
+def _read_stoptimes(gtfs_path: PathLike) -> pd.DataFrame:
+    with zipfile.ZipFile(gtfs_path) as zf:
+        st_f = zf.open("stop_times.txt")
+        st = pd.read_csv(
+            st_f, usecols=['trip_id', 'departure_time', 'stop_id'])
+    return st
+
+def _filter_stop_times(
+        st_raw: pd.DataFrame, 
+        trip_idx: pd.Index,
+        start_elapsed_seconds: int,
+        end_elapsed_seconds: int
+    ) -> pd.Series:
+    ''' 
+    Filter stop_times as follows:
+        - Is part of a trip that occurs on the day, and
+        - Is within the specified time interval
+    '''
+    st = st_raw.loc[st_raw['trip_id'].isin(trip_idx)].copy()
+    return _filter_stops_in_time_window(
+        st, start_elapsed_seconds, end_elapsed_seconds)
+
+def _calc_origin_to_trip_costmatrix(
+        cm: pd.Series, trips_idx: pd.Index, st: pd.DataFrame
+    ) -> pd.DataFrame:
+    ''' 
+    Calculate the cost matrix from each origin to each trip, which is the 
+    lowest cost for each origin to each GTFS trip. 
+
+    Args:
+      - cm: origin to stop cost matrix
+      - trips_idx: trip ids
+      - st: filtered stop times
+
+    Returns:
+        pandas.Series defined as follows:
+            - index is a MultiIndex with the the origins and the trip_ids
+              as its levels
+            - value is the closest distance from the origin to that trip
+    '''
+    cmu = cm.unstack()
+    # cmu.columns = cmu.columns.droplevel(0)
+    origins = cmu.index
+    cmt = pd.DataFrame(data=np.NaN, index=origins, columns=trips_idx)
+
+    # Loop through each trip and find the closest distance from each
+    # origin to a stop on the trip
+    for t_id in trips_idx:
+        stops = st.loc[st['trip_id'] == t_id, 'stop_id']
+        if len(stops) == 0:
+            continue  
+        cmt[t_id] = cmu[stops].min(axis=1)
+    # Put this cost matrix into the same form as a typical 
+    # accessopp cost matrix
+    cmts = cmt.stack()
+    cmts.index.names = INDEX_COLUMNS
+    cmts.name = COST_COLUMN
+    return cmts
 
 def _parse_gtfs_datestr(daystr):
     daystr = str(daystr)
@@ -469,6 +588,10 @@ def _date_to_str(day):
 # find the service ids from the calendar.txt file
 def _identify_gtfs_serviceids_on_day(
         gtfs_path: PathLike, day: date) -> List[int]:
+    """ 
+    Find the GTFS service IDs operating on the given day searching both
+    the calendar.txt and calendar_dates.txt files.
+    """
     weekday_mapping = {
         0: 'monday',
         1: 'tuesday',
@@ -500,9 +623,6 @@ def _identify_gtfs_serviceids_on_day(
         end_day = _parse_gtfs_datestr(cal.at[sid, 'end_date'])
         if (day >= start_day) and (day <= end_day):
             valid_service_ids.append(sid)
-    if len(valid_service_ids) == 0:
-        raise ValueError(
-            'No GTFS service IDs have service on provided date')
 
     # Now go through the calendar_dates file and add or remove
     # service IDs as specified in this file
@@ -517,42 +637,70 @@ def _identify_gtfs_serviceids_on_day(
 
 def _find_gtfs_trips(
         gtfs_path: PathLike, service_ids: List[int]) -> pd.Series:
+    '''
+    Find all GTFS trips running within the given service_ids. Return the 
+    trip_id and route_id fields so that we can merge in the trip modes
+    later on.
+    '''
     with zipfile.ZipFile(gtfs_path) as zf:
         tr_f = zf.open("trips.txt")
         tr = pd.read_csv(tr_f)
     fltr = tr['service_id'].isin(service_ids)
-    return tr.loc[fltr]['trip_id']
+    df = tr.loc[fltr][['trip_id', 'route_id']]
+    df = df.set_index('trip_id')
+    if not df.index.is_unique:
+        raise RuntimeError("Non-unique trips read in from trips.txt file.")
+    return df
 
-def _calc_stop_weights(
+
+def validate_mode_weights(
+        mode_mapping: Dict | None
+    ) -> Dict:
+    ''' Validation and complete the mode mapping'''
+    errmsg_inv_modename =  \
+        'mode_weights specified with invalid mode. Valid modes are: %s'
+    errms_inv_mode = \
+        'Invalid mode weight for mode %s. Must be a float greater than 0.'
+    
+    valid_modes = list(GTFS_MODE_MAPPING.values())
+    if not mode_mapping:
+        mode_mapping = {}
+    # Validate the mode-weights that are defined
+    for mm_k, mm_v in mode_mapping.items():
+        if mm_k not in valid_modes:
+            raise ValueError(errmsg_inv_modename % valid_modes)
+        try:
+            mode_mapping[mm_k] = float(mm_v)
+        except:
+            raise ValueError(errms_inv_mode % mm_k)
+        if mm_v < 0:
+            raise ValueError(errms_inv_mode % mm_k)
+    # Now fill in all the other modes with 1s
+    for mode in valid_modes:
+        if mode not in mode_mapping.keys():
+            mode_mapping[mode] = 1.0
+    return mode_mapping
+
+def _merge_trip_modes(
         gtfs_path: PathLike, 
-        trip_ids: List[int],
-        start_time: time,
-        end_time: time
-    ) -> pd.Series:
+        trips: pd.DataFrame,
+        mode_weights: Dict
+    ) -> pd.DataFrame:
+    ''' 
+    Merge in the trip modes from the GTFS routes file, and then
+    merge in the user-input mode weights. 
+    '''
     with zipfile.ZipFile(gtfs_path) as zf:
-        st_f = zf.open("stop_times.txt")
-        st = pd.read_csv(
-            st_f, usecols=['trip_id', 'departure_time', 'stop_id'])
-    st = st.loc[st['trip_id'].isin(trip_ids)].copy()
-    st[['hour', 'minute', 'seconds']] = st['departure_time'].str.split(':', expand=True)
-    st['elapsed_seconds'] = \
-        3600 * st['hour'].astype(np.int64) \
-        + 60 * st['minute'].astype(np.int64) \
-        +  st['seconds'].astype(np.int64)
-    start_elapsed_seconds = \
-        3600 * start_time.hour \
-        + 60*start_time.minute \
-        + start_time.second
-    end_elapsed_seconds = \
-        3600 * end_time.hour \
-        + 60*end_time.minute \
-        +  end_time.second
-    st['keep'] = (st['elapsed_seconds'] >= start_elapsed_seconds) & (
-        st['elapsed_seconds'] <= end_elapsed_seconds)
+        tr_f = zf.open("routes.txt")
+        routes = pd.read_csv(
+            tr_f,
+            usecols=['route_id', 'route_type'],
+            index_col='route_id'
+        )
+    trips = trips.merge(routes, left_on='route_id', right_index=True)
+    trips['mode_str'] = trips['route_type'].map(GTFS_MODE_MAPPING)
+    trips['mode_wt'] = trips['mode_str'].map(mode_weights)
+    return trips
 
-    # Weight the number of trips to each stop in the period
-    st = st.loc[st['keep'] == True]
-    pt = st.groupby('stop_id')['trip_id'].count()
-    elapsed_hours = float(end_elapsed_seconds - start_elapsed_seconds) / 3600.0
-    return pt / elapsed_hours
+
 #endregion
