@@ -15,3 +15,10 @@ ID_COLUMN = "id"
 
 # OTP-only defaults
 OTP_DEPARTURE_INCREMENT = datetime.timedelta(minutes=1)
+
+# GTFS modes
+GTFS_MODE_MAPPING = {
+    0: 'streetcar', 1: 'subway', 2: 'commuter_rail', 3: 'bus', 4: 'ferry',
+    5: 'cable_tram', 6: 'aerial', 7: 'funicular', 8: 'trolleybus', 
+    9: 'monorail'
+}
