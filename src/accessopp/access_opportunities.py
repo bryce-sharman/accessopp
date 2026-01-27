@@ -146,13 +146,12 @@ def nth_closest_opportunity(cm: pd.Series, n: int):
 
 #endregion
 
-#region Primary access measures  (cumulative opportunities)
+#region Primary access measures
 def calc_spatial_access(
         cm: pd.Series, 
         impedance_func: Callable, 
         o_j: pd.Series,
         p_i: Optional[pd.Series]=None, 
-        normalize: str="none", 
         **kwargs
     ) -> pd.Series | float:
     """ 
@@ -169,13 +168,7 @@ def calc_spatial_access(
         - p_i: Population at origin i, optional. 
             If defined, will calculate a weighted access to opportunities all 
             origins to produce a total (float) for the region.
-        - normalize: one of the following options:
-            "median": normalize access with respect to median access
-            "average": normalize access with respect to average access
-            "maximum": normalize access with respect to highest access
-            "none": do not normalize. This is the default option
-            This parameter is ignored if p_i is defined.
-        - **kwargs: parameters expected by impedance function.
+        - **kwargs: parameters expected by impedance_func.
 
     Returns:
         pandas.Series or float
@@ -184,33 +177,18 @@ def calc_spatial_access(
             if p_i is defined, retuns float with the total access to 
                 opportunities for all origins.
     """
-    if normalize not in ['median', 'average', 'maximum', 'none']:
-        raise ValueError('Invalid `normalize` parameter. ')
     f_ij = impedance_func(cm, **kwargs)
-
     if not o_j.index.equals(f_ij.columns):
-        print('Reindexing destination weights to match cost matrix columns.')
         o_j = o_j.reindex(f_ij.columns, fill_value=0.0)
     mul = f_ij.multiply(o_j)
     destination_access = mul.sum(axis=1)
-
     if isinstance(p_i, pd.Series) and len(p_i) > 0:
         if not p_i.index.equals(f_ij.index):
             p_i = p_i.reindex(f_ij.index, fill_value=0.0)
-            print('Reindex origin weights vector to mach cost_matrix` index.')
         return destination_access.dot(p_i)
     else:
-        # Apply normalization
-        if normalize == "median":
-            return destination_access / destination_access.median()
-        elif normalize == "average":
-            return destination_access / destination_access.mean()
-        elif normalize == "max":
-            return destination_access / destination_access.max()
-        else:  # 'none'
-            return destination_access
+        return destination_access
   
-
 def calc_walk_access_to_transit(
         cm: pd.Series, 
         gtfs_path: PathLike, 
