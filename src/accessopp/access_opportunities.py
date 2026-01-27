@@ -196,19 +196,22 @@ def calc_walk_access_to_transit(
         window_start: time,
         window_end: time,
         impedance_func: Callable, 
-        mode_weights: Dict | None = None,
+        mode_weights: Dict | None=None,
         **kwargs
-    ) -> pd.Series | float:
+    ) -> pd.Series:
     """ 
     Calculates walk access to transit stops, within specified time
     interval and day. Each stop is weighted by the number of visits,
-    which is normalized on a per-hour basis.
+    which is normalized on a per-hour basis. 
+
+    Optional arguments to weight trips by mode and by the start-to-end 
+    trip speed are provided.
 
     Args:
         - cm: Cost matrix between origins and all stops defined in a GTFS 
             transit schedule. This can be calculated using the 
             'compute_walk_access_to_transit_stops' method (which is currently 
-            only defined using the r5py travel time computer but can easily
+            only defined using the r5py travel time computer but can 
             be extended to the other travel time computers in the future. )
         - gtfs_path: Path to the GTFS file containing transit schedule.        
         - day: date of transit service
@@ -219,42 +222,102 @@ def calc_walk_access_to_transit(
             - negative_exp - for negative exponential weighted gravity model
             - gaussian - for gaussian weighted gravity model
         - mode_weights: Optional parameter to weight. 
+            If used, dictionary keys can be any of the following GTFS modes: 
+              'streetcar', 'subway', 'commuter_rail', 'bus', 'ferry',
+              'cable_tram', 'aerial', 'funicular', 'trolleybus', or 'monorail'
         - **kwargs: parameters expected by impedance function.
+            This parameters can either be provided as a single float, e.g. 
+            threshold=10.0, or as a dictionary where different values are 
+            entered by GTFS mode, e.g. threshold={'bus': 5.0, 'subway': 10.0}. 
+            Note that all modes present in the GTFS file, must be defined in 
+            the dictionary.
 
     Returns:
-        pandas.Series or float
-            if p_i is not defined, returns pandas.Series with the 
-                access to opportinities for each origin.
-            if p_i is defined, retuns float with the total access to 
-                opportunities for all origins.
+        pandas.Series:
+            Walk access to transit for each origin.
+
+    Notes:
+        This method can only be called to calculate access to service 
+        represented by a single GTFS schedule. Given that access to
+        opportunities is additive, access to multiple agencies can
+        be calculated by calculating each agency separately and then
+        summing the results to create the access to all transit services.
+
     """
     mode_weights = validate_mode_weights(mode_weights)
     service_ids = _identify_gtfs_serviceids_on_day(gtfs_path, day)
     if len(service_ids) == 0:
-        raise ValueError(
-            'No GTFS service IDs have service on provided date')
-    trips = _find_gtfs_trips(gtfs_path, service_ids)
-    trips = _merge_trip_modes(gtfs_path, trips, mode_weights)
-    
-    # Read in and filter stop times to valid trips and within time window
-    start_elapsed_seconds, end_elapsed_seconds = \
-        _calc_window_start_end_duration(window_start, window_end)
-    st_raw = _read_stoptimes(gtfs_path)
-    st = _filter_stop_times(
-        st_raw, trips.index, start_elapsed_seconds, end_elapsed_seconds)
-    
-    # Find the closest travel times from each origin to each trip
-    cmts = _calc_origin_to_trip_costmatrix(cm, trips.index, st)
+        raise ValueError('No GTFS service IDs have service on provided date')
+    # Read in trips.txt file keeping all trips on the given day
+    # This are specified by the service_ids
+    trips = _find_gtfs_trips_in_service_ids(gtfs_path, service_ids)
 
-    walk_acc2transit = calc_spatial_access(
-        cmts, impedance_func, o_j=trips['mode_wt'],
-        p_i=None, **kwargs)
+    # Read in and filter stop_times to keep those that:
+    #    1 - are included in trips DataFrame (service_id is valid for the day)
+    #    2 - whose stop departure time lies within time interval
+    start_elapsed_seconds = _calc_elapsed_seconds(window_start)
+    end_elapsed_seconds = _calc_elapsed_seconds(window_end)
+    st_full = _read_stoptimes(gtfs_path)
+    st_intvl = _filter_stop_times(
+        st_full, trips.index, start_elapsed_seconds, end_elapsed_seconds)
+
+    # Merge in trip modes (which are defined in the routes.txt file)
+    trips = _merge_trip_modes(gtfs_path, trips, mode_weights)
+
+    # Find the closest travel times from each origin to each trip
+    if len(kwargs) != 1:
+        raise AttributeError(
+            "Expecting a single 'kwarg' with impedance function parameter"
+        )
+    kwarg_name = list(kwargs.keys())[0]
+    if isinstance(kwargs[kwarg_name], Dict):
+        # Check that all modes are included in this dictionary
+        all_modes = trips['mode_str'].unique().tolist()
+        all_modes2 = copy(all_modes)
+        for k in kwargs[kwarg_name].keys():
+            if k in all_modes2:
+                all_modes2.remove(k)
+        if len(all_modes2) > 0:
+            raise ValueError(
+                f'kwargs defined for modes {list(kwargs[kwarg_name].keys())}, '
+                f'meanwhile the GTFS files has modes {all_modes}.\n'
+                f'All GTFS modes need to be included in impedance function  '
+                f'kwargs parameter.'
+            )
+        # Calculate separate access to stops, by trip mode, and then sum
+        # together to create the full access
+        a2tr_temp = []
+        for m in all_modes:
+            t_m = trips.loc[trips['mode_str'] == m]
+            cmts = _calc_origin_to_trip_costmatrix(cm, t_m.index, st_intvl)
+            # Create kwargs dictionary with mode-specific threshold
+            kwargs2 = {kwarg_name: kwargs[kwarg_name][m]}
+            a2tr_temp.append(
+                calc_spatial_access(
+                    cmts, impedance_func, 
+                    o_j=trips['mode_wt'],
+                    p_i=None, 
+                    **kwargs2
+                )
+            )
+        walk_acc2transit = pd.concat(a2tr_temp, axis=1)
+        walk_acc2transit.columns = all_modes
+        walk_acc2transit = walk_acc2transit.sum(axis=1)   
+    else:
+        # This is the simpler case of a single threshold
+        # Calculate a single cost-matrix using all GTFS trips
+        cmts = _calc_origin_to_trip_costmatrix(cm, trips.index, st_intvl)
+        walk_acc2transit = calc_spatial_access(
+            cmts, impedance_func, o_j=trips['mode_wt'],
+            p_i=None, **kwargs)
     
     # Scale by the duration of the time interval
     walk_acc2transit = walk_acc2transit / ((
         end_elapsed_seconds - start_elapsed_seconds) / 3600.0)
-    return walk_acc2transit
 
+    # Ensure that all origins are present
+    all_origins = cm.index.get_level_values(0).unique()
+    return walk_acc2transit.reindex(all_origins, fill_value=0)
 
 def calc_spatial_availability(
         cm: pd.Series, 
