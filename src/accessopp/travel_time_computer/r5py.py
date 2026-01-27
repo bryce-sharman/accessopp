@@ -33,7 +33,6 @@ class R5PYTravelTimeComputer():
         """
         self._transport_network = r5py.TransportNetwork(osm_pbf, gtfs)
 
-
     def build_network_from_dir(self, path: PathLike):
         """ 
         Builds a transport network given a directory containing OSM and GTFS 
@@ -89,8 +88,7 @@ class R5PYTravelTimeComputer():
            **kwargs
         )
         df = ttm.compute_travel_times()
-        return self._convert_tt_matrix(df)
-
+        return self._finalize_tt_matrix(df)
 
     def compute_bike_traveltime_matrix(
             self, 
@@ -140,8 +138,7 @@ class R5PYTravelTimeComputer():
            **kwargs
         )
         df = ttm.compute_travel_times()
-        return self._convert_tt_matrix(df)
-
+        return self._finalize_tt_matrix(df)
 
     def compute_transit_traveltime_matrix(
             self, 
@@ -195,13 +192,12 @@ class R5PYTravelTimeComputer():
            **kwargs
         )
         df = ttm.compute_travel_times()
-        return self._convert_tt_matrix(df)
+        return self._finalize_tt_matrix(df)
 
-    
     def compute_walk_traveltime_matrix_to_transit_stops(
             self, 
             origins: GeoSeries, 
-            gtfs_path: PathLike, 
+            gtfs_path: PathLike , 
             speed_walking: float = DEFAULT_SPEED_WALKING,
             **kwargs
         ) -> pd.Series:
@@ -227,20 +223,20 @@ class R5PYTravelTimeComputer():
         """
         with zipfile.ZipFile(gtfs_path) as zf:
             stops = zf.open("stops.txt")
-            df = pd.read_csv(stops, usecols=['stop_id', 'stop_lat', 'stop_lon'])
+            dtype={'stop_id': str, 'stop_lat': float, 'stop_lon': float}
+            df = pd.read_csv(stops, usecols=dtype.keys(), dtype=dtype)
             destinations = GeoSeries(
                 index=df['stop_id'],
                 data = points_from_xy(
                     df['stop_lon'], df['stop_lat'], crs="EPSG:4326")
             )
+
         return self.compute_walk_traveltime_matrix(
             origins, destinations, speed_walking=speed_walking, **kwargs)
 
-
     @staticmethod
-    def _convert_tt_matrix(tt):
+    def _finalize_tt_matrix(tt):
         tt = tt.set_index(['from_id', 'to_id']).squeeze()
         tt.index.names = INDEX_COLUMNS
         tt.name = COST_COLUMN
-        return tt * 60.0   # convert from minutes to seconds
-    
+        return tt
