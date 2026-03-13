@@ -50,3 +50,29 @@ def create_blank_ttmatrix(
     mi = pd.MultiIndex.from_product(
         [origins.index, destinations.index], names=INDEX_COLUMNS)
     return pd.Series(index=mi, name=COST_COLUMN, data=np.nan)
+
+def weighted_median(
+        df: pd.DataFrame, val_col: str, weight_col: str
+    ) -> float:
+    """ Calculate weighted median of a dataframe.
+
+    Args:
+        df: DataFrame containing the values and weights. 
+        val_col: Name of the column containing the values. 
+        weight_col: Name of the column containing the weights.
+
+    Returns:
+        Weighted median of the values. 
+        
+    """
+    df = df.sort_values(val_col)
+
+    # Take the weighted list and expand it to one row per trip
+    es_list = []
+    for _, row in df.iterrows():
+        s = pd.Series([row[val_col]] * int(round(row[weight_col], 0)))
+        es_list.append(s)
+    es = pd.concat(es_list)
+    # Calculate the median of this list using standard pandas.Series method
+    return es.median()
+
