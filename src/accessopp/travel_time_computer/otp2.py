@@ -259,7 +259,7 @@ class OTP2TravelTimeComputer():
         ) -> pd.Series:
         """ 
         Requests walk-only trip matrix from OTP, returing trip duration 
-        in seconds.
+        in minutes.
 
         Args:
             origins: Origin points.  Index is the point ids.
@@ -292,7 +292,7 @@ class OTP2TravelTimeComputer():
         ) -> pd.Series:
         """ 
         Requests bike-only trip matrix from OTP, returing trip duration 
-        in seconds.
+        in minutes.
 
         Args:
             origins: Origin points.  Index is the point ids.
@@ -349,7 +349,7 @@ class OTP2TravelTimeComputer():
                 this is set to the default walk speed; currently 5 km/hr.
                 
         Returns:
-            Travel times, in seconds, in stacked (tall) format.
+            Travel times, in minutes, in stacked (tall) format.
 
         Notes:
             For transit, returning trip duration appears to be the only useful 
@@ -368,6 +368,15 @@ class OTP2TravelTimeComputer():
                     time_increment, speed_walking, skip_test_trip_date=True)
                 ttm.at[(o_id, d_id)] = tt
         return ttm.round(N_DECIMALS)
+    
+    def compute_walk_traveltime_matrix_to_transit_stops(
+            self, 
+            origins: GeoSeries, 
+            gtfs_path: PathLike , 
+            speed_walking: float = DEFAULT_SPEED_WALKING,
+            **kwargs
+        ) -> pd.Series:
+        raise NotImplementedError("This method is not yet implemented.")
 #endregion 
 
 
@@ -488,14 +497,15 @@ class OTP2TravelTimeComputer():
         else:
             if not is_transit:   # There should only be one itinerary
                 it = itineraries[0]
-                return (it['endTime'] - it['startTime']) // 1000
+                # Convert from milliseconds to minutes
+                return (it['endTime'] - it['startTime']) // 1000 / 60.0  
             else:   
                 # transit, hence need to find the fastest itinerary
                 # use the desired trip start time (from the request) and not the 
                 # actual trip start time.
                 min_duration = 9.999e15
                 for it in response['data']['plan']['itineraries']:
-                    duration = (it['endTime'] // 1000 - triptime.timestamp())
+                    duration = (it['endTime'] // 1000 - triptime.timestamp()) / 60.0
                     if duration < min_duration:
                         min_duration = duration
                 return min_duration

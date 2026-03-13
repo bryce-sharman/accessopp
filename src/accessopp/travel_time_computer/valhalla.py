@@ -266,7 +266,7 @@ class ValhallaTravelTimeComputer():
         ) -> pd.Series:
         """ 
         Requests walk-only trip matrix from Valhalla, returing trip durations 
-        in seconds.
+        in minutes.
 
         Args:
             origins: Origin points.  Index is the point ids.
@@ -319,7 +319,7 @@ class ValhallaTravelTimeComputer():
         ) -> pd.Series:
         """ 
         Requests bike-only trip matrix from OTP, returing trip durations 
-        in seconds.
+        in minutes.
 
         Args:
             origins: Origin points.  Index is the point ids.
@@ -387,7 +387,7 @@ class ValhallaTravelTimeComputer():
         ) ->pd.Series:
         """ 
         Requests multimodal transit trip matrix from Valhalla, returing 
-        trip durations in seconds.
+        trip durations in minutes.
 
         Args:
             origins: Origin points.  Index is the point ids.
@@ -439,7 +439,15 @@ class ValhallaTravelTimeComputer():
                     time_increment, speed_walking, **kwargs)
                 ttm.at[(o_id, d_id)] = tt
         return ttm.round(N_DECIMALS)
-
+    
+    def compute_walk_traveltime_matrix_to_transit_stops(
+            self, 
+            origins: GeoSeries, 
+            gtfs_path: PathLike , 
+            speed_walking: float = DEFAULT_SPEED_WALKING,
+            **kwargs
+        ) -> pd.Series:
+        raise NotImplementedError("This method is not yet implemented.")
 
     def _compute_transit_trip_traveltime(
             self,
@@ -450,7 +458,7 @@ class ValhallaTravelTimeComputer():
             **kwargs
         ) -> float:
         """ 
-        Requests a transit/walk trip from OTP, returing trip time in seconds.
+        Requests a transit/walk trip from OTP, returing trip time in minutes.
 
         Notes:
             It appears that Valhalla's 'multi-modal' option is a 'must-use 
@@ -486,7 +494,7 @@ class ValhallaTravelTimeComputer():
             raise RuntimeError(
                 f"Error computing trip, here's the entire response: \n{r_json()}")
         
-        return trip_response['summary']['time']
+        return trip_response['summary']['time'] / 60.0  # return in minutes
 
     def _compute_interval_transit_traveltime(
             self, 
@@ -516,53 +524,6 @@ class ValhallaTravelTimeComputer():
             if elapsed_time >= time_window_duration:  # Exclusive at trip end
                 break
         return np.median(travel_times)
-
-
-    def _compute_walk_traveltime(
-            self,
-            origin: Point,
-            destination: Point,
-            triptime: Optional[datetime] = None,
-            speed_walking: Optional[float] = None,
-            **kwargs
-    ) -> float:
-        
-        if origin == destination:
-            return 0.0
-        walking_cost_options = {}
-        if speed_walking:
-            walking_cost_options['walking_speed'] = str(speed_walking)
-        for k, v in kwargs.items():
-            walking_cost_options[k] = v
-
-        full_call = {
-            'locations': [
-                {'lat': origin.y, 'lon': origin.x}, 
-                {'lat': destination.y, 'lon': destination.x}
-            ],
-            'costing': 'pedestrian',
-            'directions_type': 'none',
-        }
-        if triptime:
-            full_call['date_time'] = {
-                'type': 1, # 1 means: specified departure time
-                'value': triptime.isoformat(sep='T', timespec='minutes')
-            }
-        else:
-            full_call['date_time'] = {'type': 0}  # 0 means: leave now
-        if walking_cost_options:
-                full_call['costing_options'] = {
-                    'pedestrian': walking_cost_options
-                }
-        r = requests.get(
-            self._route_request_api, headers=self._headers, json=full_call)
-        r_json = r.json()
-        trip_response = r_json['trip']
-        if trip_response['status_message'] != 'Found route between points':
-            raise RuntimeError(
-                f"Error computing trip, here's the entire response: \n{r_json()}")
-        return trip_response['summary']['time']
-
 
     def _test_valhalla_status(
             self, 
@@ -782,5 +743,5 @@ def _process_valhalla_matrix_result(
             ttm.loc[(
                 origin_ids[s2t_ij['from_index']],
                 destination_ids[s2t_ij['to_index']]
-            )] = s2t_ij['time']
+            )] = s2t_ij['time'] / 60.0  # convert to minutes
     return ttm.round(N_DECIMALS)
